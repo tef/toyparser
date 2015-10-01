@@ -1,39 +1,9 @@
 from collections import namedtuple
 
-# some basic defintions of operator precedence
-
-everything = 0
-
-prefix = {
-    '+': 1000,
-    '-': 1000,
-}
-postfix = {
-
-}
-
-left_infix = {
-    '*': 500,
-    '+': 100,
-}
-
-right_infix = { 
-    '**': 50,
-}
-
-expressions = { } # defined later
-suffixes = { } # defined later
-
-def captures(outer, other, left=True):
-    if left: # left associative, i.e (a op b) op c
-        return outer < other
-    else: # right associative, i.e a op (b op c)
-        return outer <= other
-
-# data structures we use 
 class SyntaxErr(Exception):
     pass
 
+# data structures we use 
 class Infix(namedtuple('infix', 'op left right')):
     def __str__(self):
         return "(%s %s %s)"%(self.left, self.op, self.right) 
@@ -49,66 +19,98 @@ class Postfix(namedtuple('postfix', 'op left')):
 # hooray it's the parser.
 
 # parse *one* complete item 
+
 def parse_head(tokens, precedence):
     head, tail = tokens[0], tokens[1:]
 
-    print "parse_head, head=%s, tail=%s"%(head, tail)
-    if head in expressions:
-        head, tail = expressions[head](head, tail, precedence)
+    # print "parse_head, head=%s, tail=%s"%(head, tail)
+    if head in prefix:
+        # beginning of a rule
+        head, tail = prefix[head].parser(head, tail, precedence)
 
-    elif head in prefix:
-        head, tail = parse_head(tail, precedence=prefix[head])
-        head = Prefix(head, head)
-
-    elif head.isdigit():
+    else:
+        # just an item
         head, tail = head, tail
         
-    else:
-        raise SyntaxErr("syntax error, expected number or prefix operator")
-    
-    while tail and (tail[0] in suffixes):
-            head, tail = parse_tail(head, tail, precedence)
+    while tail:
+        old_head, old_tail = head, tail
+        head, tail = parse_tail(head, tail, precedence)
+        if old_head == head and old_tail == tail:
+            break
     return head, tail
     
 def parse_tail(head, tail, precedence):
-    print "parse_tail, head=%s, tail=%s"%(head, tail)
+    # print "parse_tail, head=%s, tail=%s"%(head, tail)
     if not tail:
         return head, tail
 
     follow = tail[0]
-    if follow in left_infix and captures(precedence, left_infix[follow]):
-        print "infix: %s" % follow
-        left, op, right, tail = head, tail[0], tail[1], tail[2:]
-        
-        right, tail = parse_tail(right, tail, left_infix[follow])
-        return Infix(op, left, right), tail
 
-    if follow in right_infix and captures(precedence, right_infix[follow], left=False):
-        print "infix: %s" % follow
-        left, op, right, tail = head, tail[0], tail[1], tail[2:]
-        
-        right, tail = parse_tail(right, tail, right_infix[follow])
-        return Infix(op, left, right), tail
+    if follow in suffix:
+        rule = suffix[follow]
+        if captures(precedence, rule.precedence, left_associative=rule.left_associative):
+            return rule.parser(head, tail, precedence)
 
-    elif follow in postfix and captures(precedence, postfix[follow]):
-        left, op, tail = head, tail[0], tail[1:]
-        return Postfix(op, left, right), tail
-    else:
-        return head, tail
 
-def parse_braces(head, tail, precedence):
-    head, tail = parse_head(tail, precedence=everything)
-    if tail[0] == ')':
-        return head, tail[1:]
-    else:
-        raise SyntaxErr("syntax error, expecting )")
+    return head, tail
+
+# rule builders
+PrefixRule = namedtuple('PrefixRule', 'parser')
+SuffixRule = namedtuple('SuffixRule', 'parser precedence left_associative')
+
+
+def parse_block(end_char):
+    def parser(head, tail, precedence):
+        head, tail = parse_head(tail, precedence=everything)
+        if tail[0] == end_char:
+            return head, tail[1:]
+        else:
+            raise SyntaxErr("syntax error, expecting %s"%end_char)
+    return PrefixRule(parser)
     
 
-expressions['('] = parse_braces
+def parse_prefix(p):
+    def parser(op, tail, precedence):
+        new_head, tail = parse_head(tail, precedence=p)
+        return Prefix(op, new_head), tail
+    return PrefixRule(parser)
 
-suffixes.update(left_infix)
-suffixes.update(right_infix)
-suffixes.update(postfix)
+def parse_infix(p, left_associative=True):
+    def parser(head, tail, precedence):
+        left, op, right, tail = head, tail[0], tail[1], tail[2:]
+        # print "infix: %s" % op
+        
+        right, tail = parse_tail(right, tail, p)
+        return Infix(op, left, right), tail
+    return SuffixRule(parser, p, left_associative)
+
+def parse_postfix(p):
+    def parser(head, tail, precedence):
+        left, op, tail = head, tail[0], tail[1:]
+        return Postfix(op, left, right), tail
+    return SuffixRule(parser, p, left_associative=True)
+
+def captures(outer, other, left_associative=True):
+    if left_associative: # left associative, i.e (a op b) op c
+        return outer < other
+    else: # right associative, i.e a op (b op c)
+        return outer <= other
+
+
+everything = 0
+
+prefix = { } # defined later
+
+prefix['('] = parse_block(')')
+prefix['+'] = parse_prefix(1000)
+prefix['-'] = parse_prefix(1000)
+
+suffix = {}
+suffix['*'] = parse_infix(500)
+suffix['+'] = parse_infix(100)
+suffix['**'] = parse_infix(50, left_associative=False)
+
+
 
 def parse(source):
     head, tail = parse_head(source, precedence=everything)
@@ -122,6 +124,9 @@ streams = [
     ['1', '*', '2', '+', '3', '*', '4'],
     ['(', '1', '+', '2', ')', '*', '3'],
     ['1', '**', '2', '**', 3],
+    ['+', '1','*',2],
+    ['+', '(', '1','*','2',')'],
+
 ]
 
 for test in streams:
