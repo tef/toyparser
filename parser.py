@@ -22,15 +22,10 @@ class Postfix(namedtuple('postfix', 'op left')):
 
 def parse_head(tokens, precedence):
     head, tail = tokens[0], tokens[1:]
-
     # print "parse_head, head=%s, tail=%s"%(head, tail)
-    if head in prefix:
-        # beginning of a rule
-        head, tail = prefix[head].parser(head, tail, precedence)
 
-    else:
-        # just an item
-        head, tail = head, tail
+    if head in prefix: # beginning of a rule
+        head, tail = prefix[head].parser(head, tail, precedence)
         
     while tail:
         old_head, old_tail = head, tail
@@ -41,16 +36,11 @@ def parse_head(tokens, precedence):
     
 def parse_tail(head, tail, precedence):
     # print "parse_tail, head=%s, tail=%s"%(head, tail)
-    if not tail:
-        return head, tail
 
-    follow = tail[0]
-
-    if follow in suffix:
-        rule = suffix[follow]
+    if tail and tail[0] in suffix:
+        rule = suffix[tail[0]]
         if captures(precedence, rule.precedence, left_associative=rule.left_associative):
             return rule.parser(head, tail, precedence)
-
 
     return head, tail
 
