@@ -144,7 +144,7 @@ def parse_item(cursor, precedence):
         if rule and captures(precedence, rule.precedence, left_associative=rule.left_associative):
             item, cursor = rule.parse_item_suffix(item, cursor, precedence)
         else:
-            return item, cursor
+            break
 
     return item, cursor
 
@@ -242,6 +242,7 @@ streams = [
     ['(', '1', '+', '2', ')', '*', '3'],
     ['1', '**', '2', '**', 3],
     ['3','+','1', '**', '2', '**', '3', '+', 4],
+    "1 + 2 + 3 * 4 * 5 * 6".split(),
     ['+', '1','*',2],
     ['+', '(', '1','*','2',')'],
     ['x','[','1',']'],
