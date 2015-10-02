@@ -1,3 +1,23 @@
+"""
+An operator precedence parser that handles expressions.
+
+It's basically recursive descent + a while loop to handle left recursion.
+
+For ((1+2)+3)+4 we parse 1, and parse the suffix for 1, which is  + 2,
+then we parse the suffix for (1+2) which is +3, and so on, until we have
+((1+2)+3) and the suffix is 4.
+
+There is only really precedece settings to enforce how operations
+combine and when to switch from left to right associativity.
+
+The trick here is what's known as precedence climbing, or left corner
+transform, or pratt parsing, and a litany of other names. The trick
+is frequenly re-invented.
+
+It's very similar to doing shunting yard but with the call stack.
+"""
+
+
 from collections import namedtuple
 
 class SyntaxErr(Exception):
@@ -19,14 +39,31 @@ class Postfix(namedtuple('postfix', 'op left')):
 
 # hooray it's the parser.
 
+# We have two types of rules
+
+# Prefix Operators: Parenthesis, Expressions that don't recurse on the left hand.
+# Suffix Operators: Infix, Postfix, and things that recurse on the left.
+
 PrefixRule = namedtuple('PrefixRule', 'parser')
 SuffixRule = namedtuple('SuffixRule', 'parser precedence left_associative')
 
+# The suffix rules expose a precidence, over how much they bind to the left
+# hand argument in <head> <suffix> i.e 1 + 2 * 3 the binding on the left hand side of *
+
+# When we run a prefix rule, it passes in the binding power it has over the right 
+# hand side, i.e in +a, the binding over a
+
+# Every rule has a precidence, but only those that bind to a left hand argument
+# need to expose it. (We parse left to right)
 
 everything = 0
 
 prefix = {} 
 suffix = {}
+
+# Precidence
+# This is called in parse_tail, to work out if 1+2 op 3 
+# should parse 1+(2 op 3) or (1+2) op 3 
 
 def captures(outer, other, left_associative=True):
     if left_associative: # left associative, i.e (a op b) op c
@@ -44,16 +81,24 @@ def parse(source):
 
     return head
 
+# Parse one item with the current precidence, returning it
+# And the remaining tokens
+
 def parse_item(tokens, precedence):
     head, tail = tokens[0], tokens[1:]
     # print "parse_item, head=%s, tail=%s"%(head, tail)
 
+    # this is the normal recursive descent bit
+
     if head in prefix: # beginning of a rule
         head, tail = prefix[head].parser(head, tail, precedence)
-        
+    
+    # This is where the magic happens
     while tail:
         old_head, old_tail = head, tail
+        # Take the item and find any infix rules that bind to it and their right hand side
         head, tail = parse_tail(head, tail, precedence)
+        # And then use that as the new item, and search again for infix rules 
         if old_head == head and old_tail == tail:
             break
     return head, tail
