@@ -62,21 +62,9 @@ class Postfix(namedtuple('postfix', 'op left')):
 # Every rule has a precidence, but only those that bind to a left hand argument
 # need to expose it. (We parse left to right)
 
-everything = 0
-
 
 prefix = {} 
 suffix = {}
-
-# Precidence
-# This is called in parse_tail, to work out if 1+2 op 3 
-# should parse 1+(2 op 3) or (1+2) op 3 
-
-def captures(outer, other, left_associative=True):
-    if left_associative: # left associative, i.e (a op b) op c
-        return outer < other #(the precedence is higher, the scope is more narrow!)
-    else: # right associative, i.e a op (b op c)
-        return outer <= other
 
 # parse *one* complete item 
 
@@ -106,7 +94,7 @@ class Parser(object):
     def __eq__(self, o):
         return self.pos == o.pos and self.source == o.source
 
-    def parse_expr(self, precedence):
+    def parse_expr(self, outer):
 
         # this is the normal recursive descent bit
 
@@ -114,7 +102,7 @@ class Parser(object):
 
         print "parse: lookahead:%s pos:%d" %(lookahead, self.pos)
         if lookahead in prefix: # beginning of a rule
-            item, parser = prefix[lookahead].parse_expr(self, precedence)
+            item, parser = prefix[lookahead].parse_prefix(self, outer)
         else:
             item, parser = self.pop()
         
@@ -124,8 +112,8 @@ class Parser(object):
             rule = suffix.get(lookahead)
             print "parse: suffix lookahead:%s pos:%d" %(lookahead, parser.pos)
 
-            if rule and rule.captured_by(precedence):
-                item, parser = rule.parse_suffix(item, parser, precedence)
+            if rule and rule.captured_by(outer):
+                item, parser = rule.parse_suffix(item, parser, outer)
             else:
                 break
 
@@ -133,7 +121,7 @@ class Parser(object):
 
 def parse(source):
     parser = Parser(source)
-    item, parser = parser.parse_expr(precedence=everything)
+    item, parser = parser.parse_expr(outer=Everything)
 
     if parser:
         raise SyntaxErr("left over tokens: %s"%parser.source)
@@ -148,15 +136,15 @@ def parse(source):
 # rule builders
 
 
-Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: True))
+Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
 
 class BlockRule(namedtuple('rule', 'precedence op end_char')):
-    def captured_by(self, rule):
-        return true
+    def captured_by(self, outer):
+        return outer
 
-    def parse_expr(self, parser, precedence):
+    def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
-        item, parser = parser.parse_expr(precedence=everything)
+        item, parser = parser.parse_expr(outer=Everything)
         print "parse_block: item: %s pos:%d" %(item, parser.pos)
         parser = parser.accept(self.end_char)
         return Block(self.op, item, self.end_char), parser
@@ -165,44 +153,44 @@ class PrefixRule(namedtuple('rule', 'precedence op')):
     def captured_by(self, rule):
         return true
 
-    def parse_expr(self, parser, precedence):
+    def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
-        new_item, parser = parser.parse_expr(precedence=self.precedence)
+        new_item, parser = parser.parse_expr(outer=self)
         print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos)
         return Prefix(self.op, new_item), parser
 
 class InfixRule(namedtuple('rule','precedence op')):
-    def captured_by(self, p):
-        return p < self.precedence #(the precedence is higher, the scope is more narrow!)
+    def captured_by(self, rule):
+        return rule.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
 
-    def parse_suffix(self, item, parser, precedence):
+    def parse_suffix(self, item, parser, outer):
         left = item
         parser = parser.accept(self.op)
         print "infix: item: %s pos:%d" %(item, parser.pos)
-        right, parser = parser.parse_expr(self.precedence)
+        right, parser = parser.parse_expr(outer=self)
         return Infix(self.op, left, right), parser
 
 class RInfixRule(InfixRule):
-    def captured_by(self, p):
-        return p <= self.precedence
+    def captured_by(self, rule):
+        return rule.precedence <= self.precedence
 
 class PostfixBlockRule(namedtuple('rule','precedence op end_char')):
-    def captured_by(self, p):
-        return p < self.precedence #(the precedence is higher, the scope is more narrow!)
+    def captured_by(self, rule):
+        return rule.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
 
-    def parse_suffix(self, item, parser, precedence):
+    def parse_suffix(self, item, parser, outer):
         left = item
         parser = parser.accept(self.op)
         # print "infix: %s" % op
-        right, parser = parser.parse_expr(precedence=everything)
+        right, parser = parser.parse_expr(outer=Everything)
         parser = parser.accept(self.end_char)
         return InfixBlock(self.op, left, right, self.end_char), parser
 
 class PostfixRule(namedtuple('rule','precedence op')):
-    def captured_by(self, p):
-        return p < self.precedence #(the precedence is higher, the scope is more narrow!)
+    def captured_by(self, outer):
+        return outer.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
 
-    def parse_suffix(self, item, parser, precedence):
+    def parse_suffix(self, item, parser, outer):
         left = item
         parser = parser.accept(self.op)
         return Postfix(self.op, left), parser
@@ -247,7 +235,7 @@ suffix['not'] = InfixRule(120, 'not')
 suffix['and'] = InfixRule(110, 'and')
 suffix['or'] = InfixRule(100, 'or')
 
-suffix['='] = RInfixRule(everything, '=')
+suffix['='] = RInfixRule(0, '=')
 
 streams = [
     ['1', '*', '2', '+', '3', '*', '4'],
