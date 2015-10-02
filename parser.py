@@ -4,6 +4,7 @@ class SyntaxErr(Exception):
     pass
 
 # data structures we use 
+
 class Infix(namedtuple('infix', 'op left right')):
     def __str__(self):
         return "(%s %s %s)"%(self.left, self.op, self.right) 
@@ -18,11 +19,34 @@ class Postfix(namedtuple('postfix', 'op left')):
 
 # hooray it's the parser.
 
+PrefixRule = namedtuple('PrefixRule', 'parser')
+SuffixRule = namedtuple('SuffixRule', 'parser precedence left_associative')
+
+
+everything = 0
+
+prefix = {} 
+suffix = {}
+
+def captures(outer, other, left_associative=True):
+    if left_associative: # left associative, i.e (a op b) op c
+        return outer < other
+    else: # right associative, i.e a op (b op c)
+        return outer <= other
+
 # parse *one* complete item 
 
-def parse_head(tokens, precedence):
+def parse(source):
+    head, tail = parse_item(source, precedence=everything)
+
+    if tail:
+        raise SyntaxErr("left over tokens: %s"%tail)
+
+    return head
+
+def parse_item(tokens, precedence):
     head, tail = tokens[0], tokens[1:]
-    # print "parse_head, head=%s, tail=%s"%(head, tail)
+    # print "parse_item, head=%s, tail=%s"%(head, tail)
 
     if head in prefix: # beginning of a rule
         head, tail = prefix[head].parser(head, tail, precedence)
@@ -45,13 +69,10 @@ def parse_tail(head, tail, precedence):
     return head, tail
 
 # rule builders
-PrefixRule = namedtuple('PrefixRule', 'parser')
-SuffixRule = namedtuple('SuffixRule', 'parser precedence left_associative')
-
 
 def parse_block(end_char):
     def parser(head, tail, precedence):
-        head, tail = parse_head(tail, precedence=everything)
+        head, tail = parse_item(tail, precedence=everything)
         if tail[0] == end_char:
             return head, tail[1:]
         else:
@@ -61,7 +82,7 @@ def parse_block(end_char):
 
 def parse_prefix(p):
     def parser(op, tail, precedence):
-        new_head, tail = parse_head(tail, precedence=p)
+        new_head, tail = parse_item(tail, precedence=p)
         return Prefix(op, new_head), tail
     return PrefixRule(parser)
 
@@ -80,35 +101,16 @@ def parse_postfix(p):
         return Postfix(op, left, right), tail
     return SuffixRule(parser, p, left_associative=True)
 
-def captures(outer, other, left_associative=True):
-    if left_associative: # left associative, i.e (a op b) op c
-        return outer < other
-    else: # right associative, i.e a op (b op c)
-        return outer <= other
-
-
-everything = 0
-
-prefix = { } # defined later
+# parser rules.
 
 prefix['('] = parse_block(')')
 prefix['+'] = parse_prefix(1000)
 prefix['-'] = parse_prefix(1000)
 
-suffix = {}
 suffix['*'] = parse_infix(500)
 suffix['+'] = parse_infix(100)
 suffix['**'] = parse_infix(50, left_associative=False)
 
-
-
-def parse(source):
-    head, tail = parse_head(source, precedence=everything)
-
-    if tail:
-        raise SyntaxErr("left over tokens: %s"%tail)
-
-    return head
 
 streams = [
     ['1', '*', '2', '+', '3', '*', '4'],
