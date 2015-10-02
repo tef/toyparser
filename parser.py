@@ -29,6 +29,10 @@ class Infix(namedtuple('infix', 'op left right')):
     def __str__(self):
         return "(%s %s %s)"%(self.left, self.op, self.right) 
 
+class InfixBlock(namedtuple('infix', 'op left right close')):
+    def __str__(self):
+        return "(%s%s%s%s)"%(self.left, self.op, self.right, self.close) 
+
 class Prefix(namedtuple('prefix', 'op right')):
     def __str__(self):
         return "(%s %s)"%(self.op, self.right) 
@@ -58,6 +62,7 @@ SuffixRule = namedtuple('SuffixRule', 'parser precedence left_associative')
 
 everything = 0
 
+
 prefix = {} 
 suffix = {}
 
@@ -67,7 +72,7 @@ suffix = {}
 
 def captures(outer, other, left_associative=True):
     if left_associative: # left associative, i.e (a op b) op c
-        return outer < other
+        return outer < other #(the precedence is higher, the scope is more narrow!)
     else: # right associative, i.e a op (b op c)
         return outer <= other
 
@@ -140,6 +145,17 @@ def parse_infix(p, left_associative=True):
         return Infix(op, left, right), tail
     return SuffixRule(parser, p, left_associative)
 
+def parse_infix_block(p, end_char):
+    def parser(head, tail, precedence):
+        left, op, tail = head, tail[0], tail[1:]
+        # print "infix: %s" % op
+        right, tail = parse_item(tail, precedence=everything)
+        if tail[0] == end_char:
+            return InfixBlock(op, left, right, end_char), tail[1:]
+        else:
+            raise SyntaxErr("syntax error, expecting %s"%end_char)
+    return SuffixRule(parser,p, left_associative=True)
+
 def parse_postfix(p):
     def parser(head, tail, precedence):
         left, op, tail = head, tail[0], tail[1:]
@@ -149,20 +165,52 @@ def parse_postfix(p):
 # parser rules.
 
 prefix['('] = parse_block(')')
-prefix['+'] = parse_prefix(1000)
-prefix['-'] = parse_prefix(1000)
+prefix['{'] = parse_block('}')
+prefix['['] = parse_block(']')
+
+suffix['('] = parse_infix_block(800,')')
+suffix['{'] = parse_infix_block(800,'}')
+suffix['['] = parse_infix_block(800,']')
+
+suffix['**'] = parse_infix(700, left_associative=False)
+
+prefix['+'] = parse_prefix(600)
+prefix['-'] = parse_prefix(600)
+prefix['~'] = parse_prefix(600)
+prefix['!'] = parse_prefix(600)
 
 suffix['*'] = parse_infix(500)
-suffix['+'] = parse_infix(100)
-suffix['**'] = parse_infix(50, left_associative=False)
+suffix['/'] = parse_infix(500)
+suffix['//'] = parse_infix(500)
+suffix['%'] = parse_infix(500)
 
+suffix['-'] = parse_infix(400)
+suffix['+'] = parse_infix(400)
+
+suffix['<<'] = parse_infix(300)
+suffix['>>'] = parse_infix(300)
+
+suffix['&'] = parse_infix(220)
+suffix['^'] = parse_infix(210)
+suffix['|'] = parse_infix(200)
+
+for c in "in,not in,is,is,<,<=,>,>=,<>,!=,==".split(','):
+    suffix[c] = parse_infix(130)
+
+suffix['not'] = parse_infix(120)
+suffix['and'] = parse_infix(110)
+suffix['or'] = parse_infix(100)
+
+suffix['='] = parse_infix(everything, left_associative=False)
 
 streams = [
     ['1', '*', '2', '+', '3', '*', '4'],
     ['(', '1', '+', '2', ')', '*', '3'],
     ['1', '**', '2', '**', 3],
+    ['3','+','1', '**', '2', '**', '3', '+', 4],
     ['+', '1','*',2],
     ['+', '(', '1','*','2',')'],
+    ['x','[','1',']'],
 
 ]
 
