@@ -96,9 +96,9 @@ class Cursor(object):
     def pop(self):
         return self.peek(), self.next()
 
-    def advance(self, e):
+    def accept(self, e):
         if e == self.source[self.pos]:
-            return  self.next()
+            return self.next()
         else:
             raise SyntaxErr("expecting: %s, got %s"%(e, self.peek))
 
@@ -109,10 +109,34 @@ class Cursor(object):
     def __eq__(self, o):
         return self.pos == o.pos and self.source == o.source
 
+    def parse_item(self, precedence):
+
+        # this is the normal recursive descent bit
+
+        lookahead = self.peek()
+
+        print "parse_item: lookahead:%s pos:%d" %(lookahead, self.pos)
+        if lookahead in prefix: # beginning of a rule
+            item, cursor = prefix[lookahead].parse_item(self, precedence)
+        else:
+            item, cursor = self.pop()
+        
+        # This is where the magic happens
+        while cursor:
+            lookahead = cursor.peek()
+            rule = suffix.get(lookahead)
+            print "parse_item: suffix lookahead:%s pos:%d" %(lookahead, cursor.pos)
+
+            if rule and captures(precedence, rule.precedence, left_associative=rule.left_associative):
+                item, cursor = rule.parse_item_suffix(item, cursor, precedence)
+            else:
+                break
+
+        return item, cursor
 
 def parse(source):
     cursor = Cursor(source)
-    item, cursor = parse_item(cursor, precedence=everything)
+    item, cursor = cursor.parse_item(precedence=everything)
 
     if cursor:
         raise SyntaxErr("left over tokens: %s"%cursor.source)
@@ -123,49 +147,25 @@ def parse(source):
 # And the remaining tokens
 
 
-def parse_item(cursor, precedence):
-
-    # this is the normal recursive descent bit
-
-    lookahead = cursor.peek()
-
-    print "parse_item: lookahead:%s pos:%d" %(lookahead, cursor.pos)
-    if lookahead in prefix: # beginning of a rule
-        item, cursor = prefix[lookahead].parse_item(cursor, precedence)
-    else:
-        item, cursor = cursor.pop()
-    
-    # This is where the magic happens
-    while cursor:
-        lookahead = cursor.peek()
-        rule = suffix.get(lookahead)
-        print "parse_item: suffix lookahead:%s pos:%d" %(lookahead, cursor.pos)
-
-        if rule and captures(precedence, rule.precedence, left_associative=rule.left_associative):
-            item, cursor = rule.parse_item_suffix(item, cursor, precedence)
-        else:
-            break
-
-    return item, cursor
 
 # rule builders
 
-def parse_block(end_char):
-    def parser(cursor, precedence):
-        op, cursor = cursor.pop()
-        item, cursor = parse_item(cursor, precedence=everything)
+class BlockRule(namedtuple('rule', 'precedence start_char end_char')):
+    def captured_by(self, rule):
+        return true
+
+    def parse_item(self, cursor, precedence):
+        cursor = cursor.accept(self.start_char)
+        item, cursor = cursor.parse_item(precedence=everything)
         print "parse_block: item: %s pos:%d" %(item, cursor.pos)
-        if cursor.peek() == end_char:
-            return Block(op, item, end_char), cursor.next()
-        else:
-            raise SyntaxErr("syntax error, expecting %s"%end_char)
-    return PrefixRule(parser)
+        cursor = cursor.accept(self.end_char)
+        return Block(self.start_char, item, self.end_char), cursor
     
 
 def parse_prefix(p):
     def parser(cursor, precedence):
         op, cursor = cursor.pop()
-        new_item, cursor = parse_item(cursor, precedence=p)
+        new_item, cursor = cursor.parse_item(precedence=p)
         print "parse_prefix: item: %s pos:%d" %(new_item, cursor.pos)
         return Prefix(op, new_item), cursor
     return PrefixRule(parser)
@@ -175,17 +175,18 @@ def parse_infix(p, left_associative=True):
         left = item
         op, cursor = cursor.pop()
         print "infix: item: %s pos:%d" %(item, cursor.pos)
-        right, cursor = parse_item(cursor, p)
+        right, cursor = cursor.parse_item(p)
         return Infix(op, left, right), cursor
     return SuffixRule(parser, p, left_associative)
+
 
 def parse_infix_block(p, end_char):
     def parser(item, cursor, precedence):
         left = item
         op, cursor = cursor.pop()
         # print "infix: %s" % op
-        right, cursor = parse_item(cursor, precedence=everything)
-        cursor = cursor.advance(end_char)
+        right, cursor = cursor.parse_item(precedence=everything)
+        cursor = cursor.accept(end_char)
         return InfixBlock(op, left, right, end_char), cursor
     return SuffixRule(parser,p, left_associative=True)
 
@@ -198,9 +199,9 @@ def parse_postfix(p):
 
 # parser rules.
 
-prefix['('] = parse_block(')')
-prefix['{'] = parse_block('}')
-prefix['['] = parse_block(']')
+prefix['('] = BlockRule(900,'(',')')
+prefix['{'] = BlockRule(900,'{','}')
+prefix['['] = BlockRule(900,'[',']')
 
 suffix['('] = parse_infix_block(800,')')
 suffix['{'] = parse_infix_block(800,'}')
