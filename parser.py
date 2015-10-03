@@ -23,12 +23,6 @@ from collections import namedtuple
 class SyntaxErr(Exception):
     pass
 
-# data structures we use 
-
-# Builders? Subset passed in construction
-# Expressions/if/while/for
-# Tokenizer
-
 Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
 
 class Block(namedtuple('block', 'op item close')):
