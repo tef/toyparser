@@ -63,10 +63,67 @@ class Postfix(namedtuple('postfix', 'op left')):
 # need to expose it. (We parse left to right)
 
 
-prefix = {} 
-suffix = {}
-
 # parse *one* complete item 
+# rule builders
+
+Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
+
+class BlockRule(namedtuple('rule', 'precedence op end_char')):
+    def captured_by(self, outer):
+        return outer
+
+    def parse_prefix(self, parser, outer):
+        parser = parser.accept(self.op)
+        item, parser = parser.parse_expr(outer=Everything)
+        print "parse_block: item: %s pos:%d" %(item, parser.pos)
+        parser = parser.accept(self.end_char)
+        return Block(self.op, item, self.end_char), parser
+    
+class PrefixRule(namedtuple('rule', 'precedence op')):
+    def captured_by(self, rule):
+        return true
+
+    def parse_prefix(self, parser, outer):
+        parser = parser.accept(self.op)
+        new_item, parser = parser.parse_expr(outer=self)
+        print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos)
+        return Prefix(self.op, new_item), parser
+
+class InfixRule(namedtuple('rule','precedence op')):
+    def captured_by(self, rule):
+        return rule.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
+
+    def parse_suffix(self, item, parser, outer):
+        left = item
+        parser = parser.accept(self.op)
+        print "infix: item: %s pos:%d" %(item, parser.pos)
+        right, parser = parser.parse_expr(outer=self)
+        return Infix(self.op, left, right), parser
+
+class RInfixRule(InfixRule):
+    def captured_by(self, rule):
+        return rule.precedence <= self.precedence
+
+class PostfixBlockRule(namedtuple('rule','precedence op end_char')):
+    def captured_by(self, rule):
+        return rule.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
+
+    def parse_suffix(self, item, parser, outer):
+        left = item
+        parser = parser.accept(self.op)
+        # print "infix: %s" % op
+        right, parser = parser.parse_expr(outer=Everything)
+        parser = parser.accept(self.end_char)
+        return InfixBlock(self.op, left, right, self.end_char), parser
+
+class PostfixRule(namedtuple('rule','precedence op')):
+    def captured_by(self, outer):
+        return outer.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
+
+    def parse_suffix(self, item, parser, outer):
+        left = item
+        parser = parser.accept(self.op)
+        return Postfix(self.op, left), parser
 
 class Parser(object):
     def __init__(self, source, pos=0):
@@ -133,67 +190,9 @@ def parse(source):
 
 
 
-# rule builders
+prefix = {} 
+suffix = {}
 
-
-Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
-
-class BlockRule(namedtuple('rule', 'precedence op end_char')):
-    def captured_by(self, outer):
-        return outer
-
-    def parse_prefix(self, parser, outer):
-        parser = parser.accept(self.op)
-        item, parser = parser.parse_expr(outer=Everything)
-        print "parse_block: item: %s pos:%d" %(item, parser.pos)
-        parser = parser.accept(self.end_char)
-        return Block(self.op, item, self.end_char), parser
-    
-class PrefixRule(namedtuple('rule', 'precedence op')):
-    def captured_by(self, rule):
-        return true
-
-    def parse_prefix(self, parser, outer):
-        parser = parser.accept(self.op)
-        new_item, parser = parser.parse_expr(outer=self)
-        print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos)
-        return Prefix(self.op, new_item), parser
-
-class InfixRule(namedtuple('rule','precedence op')):
-    def captured_by(self, rule):
-        return rule.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
-
-    def parse_suffix(self, item, parser, outer):
-        left = item
-        parser = parser.accept(self.op)
-        print "infix: item: %s pos:%d" %(item, parser.pos)
-        right, parser = parser.parse_expr(outer=self)
-        return Infix(self.op, left, right), parser
-
-class RInfixRule(InfixRule):
-    def captured_by(self, rule):
-        return rule.precedence <= self.precedence
-
-class PostfixBlockRule(namedtuple('rule','precedence op end_char')):
-    def captured_by(self, rule):
-        return rule.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
-
-    def parse_suffix(self, item, parser, outer):
-        left = item
-        parser = parser.accept(self.op)
-        # print "infix: %s" % op
-        right, parser = parser.parse_expr(outer=Everything)
-        parser = parser.accept(self.end_char)
-        return InfixBlock(self.op, left, right, self.end_char), parser
-
-class PostfixRule(namedtuple('rule','precedence op')):
-    def captured_by(self, outer):
-        return outer.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
-
-    def parse_suffix(self, item, parser, outer):
-        left = item
-        parser = parser.accept(self.op)
-        return Postfix(self.op, left), parser
 
 # parser rules.
 
