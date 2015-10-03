@@ -25,48 +25,15 @@ class SyntaxErr(Exception):
 
 # data structures we use 
 
-class Block(namedtuple('infix', 'op item close')):
-    def __str__(self):
-        return "<%s%s%s>"%(self.op, self.item, self.close) 
-
-class Infix(namedtuple('infix', 'op left right')):
-    def __str__(self):
-        return "<%s %s %s>"%(self.left, self.op, self.right) 
-
-class InfixBlock(namedtuple('infix', 'op left right close')):
-    def __str__(self):
-        return "<%s%s%s%s>"%(self.left, self.op, self.right, self.close) 
-
-class Prefix(namedtuple('prefix', 'op right')):
-    def __str__(self):
-        return "<%s %s>"%(self.op, self.right) 
-
-class Postfix(namedtuple('postfix', 'op left')):
-    def __str__(self):
-        return "<%s %s>"%(self.left, self.op) 
-
-# hooray it's the parser.
-
-# We have two types of rules
-
-# Prefix Operators: Parenthesis, Expressions that don't recurse on the left hand.
-# Suffix Operators: Infix, Postfix, and things that recurse on the left.
-
-
-# The suffix rules expose a precidence, over how much they bind to the left
-# hand argument in <head> <suffix> i.e 1 + 2 * 3 the binding on the left hand side of *
-
-# When we run a prefix rule, it passes in the binding power it has over the right 
-# hand side, i.e in +a, the binding over a
-
-# Every rule has a precidence, but only those that bind to a left hand argument
-# need to expose it. (We parse left to right)
-
-
-# parse *one* complete item 
-# rule builders
+# Builders? Subset passed in construction
+# Expressions/if/while/for
+# Tokenizer
 
 Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
+
+class Block(namedtuple('block', 'op item close')):
+    def __str__(self):
+        return "<%s%s%s>"%(self.op, self.item, self.close) 
 
 class BlockRule(namedtuple('rule', 'precedence op end_char')):
     def captured_by(self, outer):
@@ -79,6 +46,10 @@ class BlockRule(namedtuple('rule', 'precedence op end_char')):
         parser = parser.accept(self.end_char)
         return Block(self.op, item, self.end_char), parser
     
+class Prefix(namedtuple('prefix', 'op right')):
+    def __str__(self):
+        return "<%s %s>"%(self.op, self.right) 
+
 class PrefixRule(namedtuple('rule', 'precedence op')):
     def captured_by(self, rule):
         return true
@@ -88,6 +59,11 @@ class PrefixRule(namedtuple('rule', 'precedence op')):
         new_item, parser = parser.parse_expr(outer=self)
         print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos)
         return Prefix(self.op, new_item), parser
+
+
+class Infix(namedtuple('infix', 'op left right')):
+    def __str__(self):
+        return "<%s %s %s>"%(self.left, self.op, self.right) 
 
 class InfixRule(namedtuple('rule','precedence op')):
     def captured_by(self, rule):
@@ -103,6 +79,10 @@ class InfixRule(namedtuple('rule','precedence op')):
 class RInfixRule(InfixRule):
     def captured_by(self, rule):
         return rule.precedence <= self.precedence
+
+class PostfixBlock(namedtuple('infix', 'op left right close')):
+    def __str__(self):
+        return "<%s%s%s%s>"%(self.left, self.op, self.right, self.close) 
 
 class PostfixBlockRule(namedtuple('rule','precedence op end_char')):
     def captured_by(self, rule):
@@ -124,6 +104,11 @@ class PostfixRule(namedtuple('rule','precedence op')):
         left = item
         parser = parser.accept(self.op)
         return Postfix(self.op, left), parser
+
+class Postfix(namedtuple('postfix', 'op left')):
+    def __str__(self):
+        return "<%s %s>"%(self.left, self.op) 
+
 
 class Parser(object):
     def __init__(self, source, pos=0):
