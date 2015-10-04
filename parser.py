@@ -87,7 +87,7 @@ class PostfixBlockRule(namedtuple('rule','precedence op end_char')):
         # print "infix: %s" % op
         right, parser = parser.parse_expr(outer=Everything)
         parser = parser.accept(self.end_char)
-        return InfixBlock(self.op, left, right, self.end_char), parser
+        return PostfixBlock(self.op, left, right, self.end_char), parser
 
 class PostfixRule(namedtuple('rule','precedence op')):
     def captured_by(self, outer):
@@ -102,17 +102,28 @@ class Postfix(namedtuple('postfix', 'op left')):
     def __str__(self):
         return "<%s %s>"%(self.left, self.op) 
 
+class DefaultRule(namedtuple('expr', 'op precedence')):
+    def captured_by(self, rule):
+        true
 
-class Parser(object):
-    def __init__(self, source, pos=0):
+    def parse_prefix(self, parser, outer):
+        return parser.pop()
+
+    def parse_suffix(self, item, parser, outer):
+        return item, parser
+
+
+class ParseCursor(object):
+    def __init__(self, source, language, pos=0):
         self.source = source
         self.pos = pos
+        self.lang = language
 
     def peek(self):
         return self.source[self.pos]
 
     def next(self):
-        return Parser(self.source,self.pos+1)
+        return ParseCursor(self.source,self.lang,self.pos+1)
 
     def pop(self):
         return self.peek(), self.next()
@@ -135,16 +146,17 @@ class Parser(object):
 
         lookahead = self.peek()
 
+        rule = self.lang.get_prefix_rule(lookahead)
         print "parse: lookahead:%s pos:%d" %(lookahead, self.pos)
-        if lookahead in prefix: # beginning of a rule
-            item, parser = prefix[lookahead].parse_prefix(self, outer)
+        if rule: # beginning of a rule
+            item, parser = rule.parse_prefix(self, outer)
         else:
             item, parser = self.pop()
         
         # This is where the magic happens
         while parser:
             lookahead = parser.peek()
-            rule = suffix.get(lookahead)
+            rule = self.lang.get_suffix_rule(lookahead)
             print "parse: suffix lookahead:%s pos:%d" %(lookahead, parser.pos)
 
             if rule and rule.captured_by(outer):
@@ -154,8 +166,8 @@ class Parser(object):
 
         return item, parser
 
-def parse(source):
-    parser = Parser(source)
+def parse(source, language):
+    parser = ParseCursor(source, language)
     item, parser = parser.parse_expr(outer=Everything)
 
     if parser:
@@ -163,56 +175,85 @@ def parse(source):
 
     return item
 
-# Parse one item with the current precidence, returning it
-# And the remaining tokens
 
+class Tokenizer(object):
+    pass
 
+class Language(object):
+    def __init__(self):
+        self.suffix = {}
+        self.prefix = {}
 
-prefix = {} 
-suffix = {}
+    def add_prefix(self, rule):
+        self.prefix[rule.op] = rule
 
+    def add_suffix(self, rule):
+        self.suffix[rule.op] = rule
 
-# parser rules.
+    def get_suffix_rule(self, key):
+        return self.suffix.get(key)
 
+    def get_prefix_rule(self, key):
+        return self.prefix.get(key)
 
-prefix['('] = BlockRule(900,'(',')')
-prefix['{'] = BlockRule(900,'{','}')
-prefix['['] = BlockRule(900,'[',']')
+    def def_block_rule(self, p, start, end):
+        self.add_prefix(BlockRule(p, start, end))
 
-suffix['('] = PostfixBlockRule(800,'(',')')
-suffix['{'] = PostfixBlockRule(800,'(','}')
-suffix['['] = PostfixBlockRule(800,'[',']')
+    def def_postfix_block_rule(self, p, start, end):
+        self.add_suffix(PostfixBlockRule(p, start, end))
 
-suffix['**'] = RInfixRule(700, '**')
+    def def_postfix_rule(self, p, op):
+        self.add_suffix(PostfixRule(p, op))
 
-prefix['+'] = PrefixRule(600, '+')
-prefix['-'] = PrefixRule(600, '-')
-prefix['~'] = PrefixRule(600, '~')
-prefix['!'] = PrefixRule(600, '!')
+    def def_prefix_rule(self, p, op):
+        self.add_prefix(PrefixRule(p, op))
 
-suffix['*'] = InfixRule(500, '*')
-suffix['/'] = InfixRule(500, '/')
-suffix['//'] = InfixRule(500, '//')
-suffix['%'] = InfixRule(500, '%')
+    def def_infix_rule(self,p,op):
+        self.add_suffix(InfixRule(p, op))
+    
+    def def_rinfix_rule(self,p,op):
+        self.add_suffix(RInfixRule(p, op))
 
-suffix['-'] = InfixRule(400, '-')
-suffix['+'] = InfixRule(400, '+')
+language = Language()
 
-suffix['<<'] = InfixRule(300, '<<')
-suffix['>>'] = InfixRule(300, '>>')
+language.def_block_rule(900,'(',')')
+language.def_block_rule(900,'{','}')
+language.def_block_rule(900,'[',']')
 
-suffix['&'] = InfixRule(220, '&')
-suffix['^'] = InfixRule(210, '^')
-suffix['|'] = InfixRule(200, '|')
+language.def_postfix_block_rule(800,'(',')')
+language.def_postfix_block_rule(800,'(','}')
+language.def_postfix_block_rule(800,'[',']')
+
+language.def_rinfix_rule(700, '**')
+
+language.def_prefix_rule(600, '+')
+language.def_prefix_rule(600, '-')
+language.def_prefix_rule(600, '~')
+language.def_prefix_rule(600, '!')
+
+language.def_infix_rule(500, '*')
+language.def_infix_rule(500, '/')
+language.def_infix_rule(500, '//')
+language.def_infix_rule(500, '%')
+
+language.def_infix_rule(400, '-')
+language.def_infix_rule(400, '+')
+
+language.def_infix_rule(300, '<<')
+language.def_infix_rule(300, '>>')
+
+language.def_infix_rule(220, '&')
+language.def_infix_rule(210, '^')
+language.def_infix_rule(200, '|')
 
 for c in "in,not in,is,is,<,<=,>,>=,<>,!=,==".split(','):
-    suffix[c] = InfixRule(130, c)
+    language.def_infix_rule(130, c)
 
-suffix['not'] = InfixRule(120, 'not')
-suffix['and'] = InfixRule(110, 'and')
-suffix['or'] = InfixRule(100, 'or')
+language.def_infix_rule(120, 'not')
+language.def_infix_rule(110, 'and')
+language.def_infix_rule(100, 'or')
 
-suffix['='] = RInfixRule(0, '=')
+language.def_rinfix_rule(0, '=')
 
 streams = [
     ['1', '*', '2', '+', '3', '*', '4'],
@@ -228,6 +269,6 @@ streams = [
 
 for test in streams:
     print test
-    print parse(test)
+    print parse(test, language)
     print 
 
