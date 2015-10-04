@@ -1,20 +1,19 @@
 """
 An operator precedence parser that handles expressions.
 
-It's basically recursive descent + a while loop to handle left recursion.
-
-For ((1+2)+3)+4 we parse 1, and parse the suffix for 1, which is  + 2,
-then we parse the suffix for (1+2) which is +3, and so on, until we have
-((1+2)+3) and the suffix is 4.
-
-There is only really precedece settings to enforce how operations
-combine and when to switch from left to right associativity.
-
 The trick here is what's known as precedence climbing, or left corner
 transform, or pratt parsing, and a litany of other names. The trick
 is frequenly re-invented.
 
+It's basically recursive descent + a while loop to handle left recursion.
 It's very similar to doing shunting yard but with the call stack.
+
+The trick is to split your rules into prefixes, and suffixes. You run any prefix
+rules (recursive decent bit), and then repeatedly apply suffix rules (precedence
+climbing).
+
+For ex: infix operators are defined as suffix rules, we only look for a + 
+after we've parsed an item
 """
 
 
