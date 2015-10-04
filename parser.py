@@ -113,6 +113,8 @@ class DefaultRule(namedtuple('expr', 'op precedence')):
         return item, parser
 
 
+
+
 class ParseCursor(object):
     def __init__(self, source, language, pos=0):
         self.source = source
@@ -146,7 +148,7 @@ class ParseCursor(object):
 
         lookahead = self.peek()
 
-        rule = self.lang.get_prefix_rule(lookahead)
+        rule = self.lang.get_prefix_rule(lookahead, outer)
         print "parse: lookahead:%s pos:%d" %(lookahead, self.pos)
         if rule: # beginning of a rule
             item, parser = rule.parse_prefix(self, outer)
@@ -156,7 +158,7 @@ class ParseCursor(object):
         # This is where the magic happens
         while parser:
             lookahead = parser.peek()
-            rule = self.lang.get_suffix_rule(lookahead)
+            rule = self.lang.get_suffix_rule(lookahead, outer)
             print "parse: suffix lookahead:%s pos:%d" %(lookahead, parser.pos)
 
             if rule and rule.captured_by(outer):
@@ -168,8 +170,35 @@ class ParseCursor(object):
 
 
 class Tokenizer(object):
-    pass
+    def __init__(self):
+        pass
 
+    # track indents, emit whitespace ?
+    # i.e emit indent tokens, seperator tokens, line end tokens
+
+    def def_whitespace(self, name, rx):
+        pass
+
+    def def_keyword(self, name, rx):
+        pass
+
+    def def_literal(self, name, rx):
+        pass
+    
+    def def_operator(self, name, rx):
+        pass
+
+    def def_control(self, name, rx): 
+        pass
+
+    def def_ignored(self, name, rx):
+        pass
+
+    def def_error(self, name,rx):
+        pass
+
+    def next_token(self, string, offset):
+        pass
 class Language(object):
     def __init__(self):
         self.suffix = {}
@@ -181,10 +210,10 @@ class Language(object):
     def add_suffix(self, rule):
         self.suffix[rule.op] = rule
 
-    def get_suffix_rule(self, key):
+    def get_suffix_rule(self, key, outer):
         return self.suffix.get(key)
 
-    def get_prefix_rule(self, key):
+    def get_prefix_rule(self, key, outer):
         return self.prefix.get(key)
 
     def def_block_rule(self, p, start, end):
