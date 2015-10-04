@@ -17,7 +17,7 @@ after we've parsed an item
 """
 
 
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
 class SyntaxErr(Exception):
     pass
@@ -35,7 +35,7 @@ class BlockRule(namedtuple('rule', 'precedence op end_char')):
     def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
         item, parser = parser.parse_expr(outer=Everything)
-        print "parse_block: item: %s pos:%d" %(item, parser.pos)
+        print "parse_block: item: %s pos:%d" %(item, parser.pos())
         parser = parser.accept(self.end_char)
         return Block(self.op, item, self.end_char), parser
     
@@ -50,7 +50,7 @@ class PrefixRule(namedtuple('rule', 'precedence op')):
     def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
         new_item, parser = parser.parse_expr(outer=self)
-        print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos)
+        print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos())
         return Prefix(self.op, new_item), parser
 
 
@@ -65,7 +65,7 @@ class InfixRule(namedtuple('rule','precedence op')):
     def parse_suffix(self, item, parser, outer):
         left = item
         parser = parser.accept(self.op)
-        print "infix: item: %s pos:%d" %(item, parser.pos)
+        print "infix: item: %s pos:%d" %(item, parser.pos())
         right, parser = parser.parse_expr(outer=self)
         return Infix(self.op, left, right), parser
 
@@ -115,17 +115,24 @@ class DefaultRule(namedtuple('expr', 'op precedence')):
 
 
 
-class ParseCursor(object):
-    def __init__(self, source, language, pos=0):
-        self.source = source
-        self.pos = pos
+class Parser(object):
+    def __init__(self, language, tokens, pos=0):
+        self.tokens = tokens
         self.lang = language
 
     def peek(self):
-        return self.source[self.pos]
+        return self.tokens.current()
 
+    def pos(self):
+        if self.tokens:
+            return self.tokens.pos
+        else:
+            return -1
+        
     def next(self):
-        return ParseCursor(self.source,self.lang,self.pos+1)
+        tokens = self.tokens.move_next()
+        return Parser(self.lang, tokens)
+
 
     def pop(self):
         return self.peek(), self.next()
@@ -137,10 +144,10 @@ class ParseCursor(object):
             raise SyntaxErr("expecting: %s, got %s"%(e, self.peek()))
 
     def __nonzero__(self):
-        return self.pos < len(self.source)
+        return bool(self.tokens)
 
     def __eq__(self, o):
-        return self.pos == o.pos and self.source == o.source
+        return self.tokens == o.tokens
 
     def parse_expr(self, outer):
 
@@ -149,7 +156,7 @@ class ParseCursor(object):
         lookahead = self.peek()
 
         rule = self.lang.get_prefix_rule(lookahead, outer)
-        print "parse: lookahead:%s pos:%d" %(lookahead, self.pos)
+        print "parse: lookahead:%s pos:%d" %(lookahead, self.pos())
         if rule: # beginning of a rule
             item, parser = rule.parse_prefix(self, outer)
         else:
@@ -159,7 +166,7 @@ class ParseCursor(object):
         while parser:
             lookahead = parser.peek()
             rule = self.lang.get_suffix_rule(lookahead, outer)
-            print "parse: suffix lookahead:%s pos:%d" %(lookahead, parser.pos)
+            print "parse: suffix lookahead:%s pos:%d" %(lookahead, parser.pos())
 
             if rule and rule.captured_by(outer):
                 item, parser = rule.parse_suffix(item, parser, outer)
@@ -170,40 +177,46 @@ class ParseCursor(object):
 
 
 class Tokenizer(object):
-    def __init__(self):
-        pass
-
-    # track indents, emit whitespace ?
-    # i.e emit indent tokens, seperator tokens, line end tokens
-
-    def def_whitespace(self, name, rx):
-        pass
-
-    def def_keyword(self, name, rx):
-        pass
-
-    def def_literal(self, name, rx):
-        pass
+    def __init__(self, lang, source, pos=0):
+        self.lang = lang
+        self.source = source
+        self.pos = pos 
     
-    def def_operator(self, name, rx):
-        pass
+    def current(self):
+        return self.source[self.pos]
 
-    def def_control(self, name, rx): 
-        pass
+    def move_next(self):
+        pos = self.pos + 1
+        if pos < len(self.source):
+            return Tokenizer(self.lang, self.source, pos)
 
-    def def_ignored(self, name, rx):
-        pass
+    def __nonzero__(self):
+        return self.pos < len(self.source)
 
-    def def_error(self, name,rx):
-        pass
+    def __eq__(self, o):
+        return self.pos == o.pos and self.source == o.source
 
-    def next_token(self, string, offset):
-        pass
+
 class Language(object):
+    """ One big lookup table to save us from things """
     def __init__(self):
-        self.suffix = {}
-        self.prefix = {}
+        self.suffix = OrderedDict()
+        self.prefix = OrderedDict()
+        self.keywords = OrderedDict()
+        self.literals = OrderedDict()
+        self.operators = OrderedDict()
+        self.ignored = OrderedDict()
+        self.whitespace = OrderedDict()
 
+    def parse(self, source):
+        tokens = Tokenizer(self, source)
+        parser = Parser(self, tokens)
+        item, parser = parser.parse_expr(outer=Everything)
+
+        if parser:
+            raise SyntaxErr("left over tokens: %s"%parser.source)
+
+        return item
     def add_prefix(self, rule):
         self.prefix[rule.op] = rule
 
@@ -233,6 +246,27 @@ class Language(object):
     
     def def_rinfix_rule(self,p,op):
         self.add_suffix(RInfixRule(p, op))
+
+    def def_whitespace(self, name, rx):
+        pass
+
+    def def_keyword(self, name, rx):
+        pass
+
+    def def_literal(self, name, rx):
+        pass
+    
+    def def_operator(self, name, rx):
+        pass
+
+    def def_control(self, name, rx): 
+        pass
+
+    def def_ignored(self, name, rx):
+        pass
+
+    def def_error(self, name,rx):
+        pass
 
     def bootstrap(self):
         self.def_block_rule(900,'(',')')
@@ -274,14 +308,6 @@ class Language(object):
         
         self.def_rinfix_rule(0, '=')
 
-def parse(source, language):
-    parser = ParseCursor(source, language)
-    item, parser = parser.parse_expr(outer=Everything)
-
-    if parser:
-        raise SyntaxErr("left over tokens: %s"%parser.source)
-
-    return item
 
 
 streams = [
@@ -301,6 +327,6 @@ language.bootstrap()
 
 for test in streams:
     print test
-    print parse(test, language)
+    print language.parse(test)
     print 
 
