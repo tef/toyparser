@@ -166,15 +166,6 @@ class ParseCursor(object):
 
         return item, parser
 
-def parse(source, language):
-    parser = ParseCursor(source, language)
-    item, parser = parser.parse_expr(outer=Everything)
-
-    if parser:
-        raise SyntaxErr("left over tokens: %s"%parser.source)
-
-    return item
-
 
 class Tokenizer(object):
     pass
@@ -214,46 +205,55 @@ class Language(object):
     def def_rinfix_rule(self,p,op):
         self.add_suffix(RInfixRule(p, op))
 
-language = Language()
+    def bootstrap(self):
+        self.def_block_rule(900,'(',')')
+        self.def_block_rule(900,'{','}')
+        self.def_block_rule(900,'[',']')
+        
+        self.def_postfix_block_rule(800,'(',')')
+        self.def_postfix_block_rule(800,'(','}')
+        self.def_postfix_block_rule(800,'[',']')
+        
+        self.def_rinfix_rule(700, '**')
+        
+        self.def_prefix_rule(600, '+')
+        self.def_prefix_rule(600, '-')
+        self.def_prefix_rule(600, '~')
+        self.def_prefix_rule(600, '!')
+        
+        self.def_infix_rule(500, '*')
+        self.def_infix_rule(500, '/')
+        self.def_infix_rule(500, '//')
+        self.def_infix_rule(500, '%')
+        
+        self.def_infix_rule(400, '-')
+        self.def_infix_rule(400, '+')
+        
+        self.def_infix_rule(300, '<<')
+        self.def_infix_rule(300, '>>')
+        
+        self.def_infix_rule(220, '&')
+        self.def_infix_rule(210, '^')
+        self.def_infix_rule(200, '|')
+        
+        for c in "in,not in,is,is,<,<=,>,>=,<>,!=,==".split(','):
+            self.def_infix_rule(130, c)
+        
+        self.def_infix_rule(120, 'not')
+        self.def_infix_rule(110, 'and')
+        self.def_infix_rule(100, 'or')
+        
+        self.def_rinfix_rule(0, '=')
 
-language.def_block_rule(900,'(',')')
-language.def_block_rule(900,'{','}')
-language.def_block_rule(900,'[',']')
+def parse(source, language):
+    parser = ParseCursor(source, language)
+    item, parser = parser.parse_expr(outer=Everything)
 
-language.def_postfix_block_rule(800,'(',')')
-language.def_postfix_block_rule(800,'(','}')
-language.def_postfix_block_rule(800,'[',']')
+    if parser:
+        raise SyntaxErr("left over tokens: %s"%parser.source)
 
-language.def_rinfix_rule(700, '**')
+    return item
 
-language.def_prefix_rule(600, '+')
-language.def_prefix_rule(600, '-')
-language.def_prefix_rule(600, '~')
-language.def_prefix_rule(600, '!')
-
-language.def_infix_rule(500, '*')
-language.def_infix_rule(500, '/')
-language.def_infix_rule(500, '//')
-language.def_infix_rule(500, '%')
-
-language.def_infix_rule(400, '-')
-language.def_infix_rule(400, '+')
-
-language.def_infix_rule(300, '<<')
-language.def_infix_rule(300, '>>')
-
-language.def_infix_rule(220, '&')
-language.def_infix_rule(210, '^')
-language.def_infix_rule(200, '|')
-
-for c in "in,not in,is,is,<,<=,>,>=,<>,!=,==".split(','):
-    language.def_infix_rule(130, c)
-
-language.def_infix_rule(120, 'not')
-language.def_infix_rule(110, 'and')
-language.def_infix_rule(100, 'or')
-
-language.def_rinfix_rule(0, '=')
 
 streams = [
     ['1', '*', '2', '+', '3', '*', '4'],
@@ -266,6 +266,9 @@ streams = [
     ['x','[','1',']'],
 
 ]
+
+language = Language()
+language.bootstrap()
 
 for test in streams:
     print test
