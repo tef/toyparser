@@ -115,68 +115,68 @@ class DefaultRule(namedtuple('expr', 'op precedence')):
 
 
 
-class Parser(object):
-    def __init__(self, language, tokens, pos=0):
-        self.tokens = tokens
+class ParserCursor(object):
+    def __init__(self, language, lexer, pos=0):
+        self.lexer = lexer
         self.lang = language
 
-    def peek(self):
-        return self.tokens.current()
+    def current_token(self):
+        return self.lexer.current()
 
     def pos(self):
-        if self.tokens:
-            return self.tokens.pos
+        if self.lexer:
+            return self.lexer.pos
         else:
             return -1
         
     def next(self):
-        tokens = self.tokens.move_next()
-        return Parser(self.lang, tokens)
-
+        lexer = self.lexer.next()
+        return ParserCursor(self.lang, lexer)
 
     def pop(self):
-        return self.peek(), self.next()
+        return self.current_token(), self.next()
 
     def accept(self, e):
-        if e == self.peek():
+        if e == self.current_token():
             return self.next()
         else:
-            raise SyntaxErr("expecting: %s, got %s"%(e, self.peek()))
+            raise SyntaxErr("expecting: %s, got %s"%(e, self.current_token()))
 
     def __nonzero__(self):
-        return bool(self.tokens)
+        return bool(self.lexer)
 
     def __eq__(self, o):
-        return self.tokens == o.tokens
+        return self.lexer == o.lexer
 
     def parse_expr(self, outer):
 
         # this is the normal recursive descent bit
 
-        lookahead = self.peek()
+        first = self.current_token()
+        pos = self.pos()
 
-        rule = self.lang.get_prefix_rule(lookahead, outer)
-        print "parse: lookahead:%s pos:%d" %(lookahead, self.pos())
+        rule = self.lang.get_prefix_rule(first, outer)
+        print "parse: first:%s pos:%d" %(first, self.pos())
         if rule: # beginning of a rule
             item, parser = rule.parse_prefix(self, outer)
         else:
             item, parser = self.pop()
         
         # This is where the magic happens
-        while parser:
-            lookahead = parser.peek()
-            rule = self.lang.get_suffix_rule(lookahead, outer)
-            print "parse: suffix lookahead:%s pos:%d" %(lookahead, parser.pos())
+        while parser and parser.pos() != pos:
+            first = parser.current_token()
+            pos = parser.pos()
 
+            print "parse: suffix first:%s pos:%d" %(first, parser.pos())
+            rule = self.lang.get_suffix_rule(first, outer)
             if rule and rule.captured_by(outer):
                 item, parser = rule.parse_suffix(item, parser, outer)
-            else:
-                break
+
 
         return item, parser
 
 
-class Tokenizer(object):
+class LexerCursor(object):
     def __init__(self, lang, source, pos=0):
         self.lang = lang
         self.source = source
@@ -185,10 +185,10 @@ class Tokenizer(object):
     def current(self):
         return self.source[self.pos]
 
-    def move_next(self):
+    def next(self):
         pos = self.pos + 1
         if pos < len(self.source):
-            return Tokenizer(self.lang, self.source, pos)
+            return LexerCursor(self.lang, self.source, pos)
 
     def __nonzero__(self):
         return self.pos < len(self.source)
@@ -209,12 +209,12 @@ class Language(object):
         self.whitespace = OrderedDict()
 
     def parse(self, source):
-        tokens = Tokenizer(self, source)
-        parser = Parser(self, tokens)
+        lexer = LexerCursor(self, source)
+        parser = ParserCursor(self, lexer)
         item, parser = parser.parse_expr(outer=Everything)
 
         if parser:
-            raise SyntaxErr("left over tokens: %s"%parser.source)
+            raise SyntaxErr("left over lexer: %s"%parser.source)
 
         return item
     def add_prefix(self, rule):
