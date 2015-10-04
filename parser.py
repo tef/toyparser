@@ -22,6 +22,93 @@ from collections import namedtuple, OrderedDict
 class SyntaxErr(Exception):
     pass
 
+# Table driven parser/lexer cursors.
+# These cursors are immutable, and functions like next() return new cursors.
+
+class LexerCursor(object):
+    def __init__(self, lang, source, pos=0):
+        self.lang = lang
+        self.source = source
+        self.pos = pos 
+    
+    def current(self):
+        return self.source[self.pos]
+
+    def next(self):
+        pos = self.pos + 1
+        if pos < len(self.source):
+            return LexerCursor(self.lang, self.source, pos)
+
+    def __nonzero__(self):
+        return self.pos < len(self.source)
+
+    def __eq__(self, o):
+        return self.pos == o.pos and self.source == o.source
+
+
+
+class ParserCursor(object):
+    def __init__(self, language, lexer, pos=0):
+        self.lexer = lexer
+        self.lang = language
+
+    def current_token(self):
+        return self.lexer.current()
+
+    def pos(self):
+        if self.lexer:
+            return self.lexer.pos
+        else:
+            return -1
+        
+    def next(self):
+        lexer = self.lexer.next()
+        return ParserCursor(self.lang, lexer)
+
+    def pop(self):
+        return self.current_token(), self.next()
+
+    def accept(self, e):
+        if e == self.current_token():
+            return self.next()
+        else:
+            raise SyntaxErr("expecting: %s, got %s"%(e, self.current_token()))
+
+    def __nonzero__(self):
+        return bool(self.lexer)
+
+    def __eq__(self, o):
+        return self.lexer == o.lexer
+
+    def parse_expr(self, outer):
+
+        # this is the normal recursive descent bit
+
+        first = self.current_token()
+        pos = self.pos()
+
+        rule = self.lang.get_prefix_rule(first, outer)
+        print "parse: first:%s pos:%d" %(first, self.pos())
+        if rule: # beginning of a rule
+            item, parser = rule.parse_prefix(self, outer)
+        else:
+            item, parser = self.pop()
+        
+        # This is where the magic happens
+        while parser and parser.pos() != pos:
+            first = parser.current_token()
+            pos = parser.pos()
+
+            print "parse: suffix first:%s pos:%d" %(first, parser.pos())
+            rule = self.lang.get_suffix_rule(first, outer)
+            if rule and rule.captured_by(outer):
+                item, parser = rule.parse_suffix(item, parser, outer)
+
+
+        return item, parser
+
+
+# Parse Rules 
 Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
 
 class Block(namedtuple('block', 'op item close')):
@@ -112,89 +199,6 @@ class DefaultRule(namedtuple('expr', 'op precedence')):
     def parse_suffix(self, item, parser, outer):
         return item, parser
 
-
-
-
-class ParserCursor(object):
-    def __init__(self, language, lexer, pos=0):
-        self.lexer = lexer
-        self.lang = language
-
-    def current_token(self):
-        return self.lexer.current()
-
-    def pos(self):
-        if self.lexer:
-            return self.lexer.pos
-        else:
-            return -1
-        
-    def next(self):
-        lexer = self.lexer.next()
-        return ParserCursor(self.lang, lexer)
-
-    def pop(self):
-        return self.current_token(), self.next()
-
-    def accept(self, e):
-        if e == self.current_token():
-            return self.next()
-        else:
-            raise SyntaxErr("expecting: %s, got %s"%(e, self.current_token()))
-
-    def __nonzero__(self):
-        return bool(self.lexer)
-
-    def __eq__(self, o):
-        return self.lexer == o.lexer
-
-    def parse_expr(self, outer):
-
-        # this is the normal recursive descent bit
-
-        first = self.current_token()
-        pos = self.pos()
-
-        rule = self.lang.get_prefix_rule(first, outer)
-        print "parse: first:%s pos:%d" %(first, self.pos())
-        if rule: # beginning of a rule
-            item, parser = rule.parse_prefix(self, outer)
-        else:
-            item, parser = self.pop()
-        
-        # This is where the magic happens
-        while parser and parser.pos() != pos:
-            first = parser.current_token()
-            pos = parser.pos()
-
-            print "parse: suffix first:%s pos:%d" %(first, parser.pos())
-            rule = self.lang.get_suffix_rule(first, outer)
-            if rule and rule.captured_by(outer):
-                item, parser = rule.parse_suffix(item, parser, outer)
-
-
-        return item, parser
-
-
-class LexerCursor(object):
-    def __init__(self, lang, source, pos=0):
-        self.lang = lang
-        self.source = source
-        self.pos = pos 
-    
-    def current(self):
-        return self.source[self.pos]
-
-    def next(self):
-        pos = self.pos + 1
-        if pos < len(self.source):
-            return LexerCursor(self.lang, self.source, pos)
-
-    def __nonzero__(self):
-        return self.pos < len(self.source)
-
-    def __eq__(self, o):
-        return self.pos == o.pos and self.source == o.source
 
 
 class Language(object):
