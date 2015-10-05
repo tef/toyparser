@@ -75,10 +75,31 @@ class RegexLexer(object):
         pos = self._next_pos or self.match()[1]
         if pos < len(self.source):
             return self.__class__(self.lang, self.source, pos)
-    pass
 
-class OffsideFilter(object):
-    pass
+class WhitespaceFilter(object):
+    def __init__(self, lexer):
+        self.lexer = lexer
+    
+    def current(self):
+        current = self.lexer.current()
+        while self.lexer and current.name == 'whitespace':
+            self.lexer = self.lexer.next()
+            current = self.lexer.current()
+        return current
+            
+
+    def next(self):
+        lexer = self.lexer.next()
+        while lexer:
+            current = self.lexer.current()
+            if current.name == 'whitespace':
+                lexer = lexer.next()
+            else:
+                return lexer
+
+    @property
+    def pos(self):
+        return self.lexer.pos
 
 class ParserCursor(object):
     def __init__(self, language, lexer, pos=0):
@@ -92,7 +113,7 @@ class ParserCursor(object):
         if self.lexer:
             return self.lexer.pos
         
-    def next(self, skip_whitespace=True):
+    def next(self):
         lexer = self.lexer.next()
         return ParserCursor(self.lang, lexer)
 
@@ -248,14 +269,35 @@ class Language(object):
 
     def parse(self, source):
         lexer = RegexLexer(self.rx(), source)
-        parser = ParserCursor(self, lexer)
+        parser = ParserCursor(self, WhitespaceFilter(lexer))
         item, parser = parser.parse_expr(outer=Everything)
 
         if parser:
-            #print(item)
-            raise SyntaxErr("left over lexer: %s"%source[parser.pos():])
+            raise SyntaxErr("item {}, left over {}"%(item,source[parser.pos():]))
 
         return item
+    def def_whitespace(self, name, rx):
+        pass
+
+    def def_keyword(self, name, rx):
+        pass
+
+    def def_literal(self, name, rx):
+        rx = re.compile(rx, re.X).pattern
+        self.literals[name] = rx
+    
+    def def_control(self, name, rx): 
+        pass
+
+    def def_ignored(self, name, rx):
+        pass
+
+    def def_error(self, name,rx):
+        pass
+
+    def def_comment(self, name, rx):
+        pass
+
 
     def rx(self):
         if not self._rx:
@@ -270,12 +312,6 @@ class Language(object):
             self._rx = rx, dict(((v, k) for k,v in rx.groupindex.items()))
 
         return self._rx
-
-    def add_prefix(self, rule):
-        self.prefix[rule.op] = rule
-
-    def add_suffix(self, rule):
-        self.suffix[rule.op] = rule
 
     def get_suffix_rule(self, token, outer):
         return self.suffix.get(token.text)
@@ -314,28 +350,6 @@ class Language(object):
         rule = RInfixRule(p, op)
         self.suffix[rule.op] = rule
         self.operators.add(rule.op)
-
-    def def_whitespace(self, name, rx):
-        pass
-
-    def def_keyword(self, name, rx):
-        pass
-
-    def def_literal(self, name, rx):
-        rx = re.compile(rx, re.X).pattern
-        self.literals[name] = rx
-    
-    def def_control(self, name, rx): 
-        pass
-
-    def def_ignored(self, name, rx):
-        pass
-
-    def def_error(self, name,rx):
-        pass
-
-    def def_comment(self, name, rx):
-        pass
 
     def bootstrap(self):
         self.def_literal("number",r"\d[\d_]*")
