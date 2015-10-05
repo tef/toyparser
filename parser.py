@@ -30,11 +30,6 @@ class SyntaxErr(Exception):
 
 Token = namedtuple('token','name text pos line col')
 Token.__str__ = lambda self: self.text
-Token.whitespace = partial(Token, 'whitespace')
-Token.terminator = partial(Token, 'terminator')
-Token.literal = partial(Token, 'literal')
-Token.keyword = partial(Token, 'keyword')
-Token.operator = partial(Token, 'operator')
 
 Position = namedtuple('pos', 'pos line col')
 class StringLexer(object):
@@ -62,15 +57,18 @@ class RegexLexer(object):
     
     def current(self):
         if self._current is None:
-            match, start = self.match()
-            self._current = Token('t', match, start, -1, -1)
+            self._current = self.match()
         return self._current
     
 
     def match(self):
-        match = self.lang.match(self.source, self.pos)
-        self._next_pos =  match.end(0)
-        return match.group(1), match.start(1)
+        match = self.lang[0].match(self.source, self.pos)
+
+        for num, result in enumerate(match.groups()[1:],2):
+            if result:
+                name = self.lang[1][num] 
+                self._next_pos =  match.end(0)
+                return Token(name, result, match.start(num), -1, -1)
             
 
     def next(self):
@@ -119,6 +117,8 @@ class ParserCursor(object):
 
         first = self.current_token()
         pos = self.pos()
+        #print(pos, first)
+
 
         rule = self.lang.get_prefix_rule(first, outer)
         #print "parse: first:%s pos:%d" %(first, self.pos())
@@ -204,6 +204,7 @@ class PostfixBlockRule(namedtuple('rule','precedence op end_char')):
 
     def parse_suffix(self, item, parser, outer):
         left = item
+        #print(parser.pos(), parser.current_token())
         parser = parser.accept(self.op)
         # print "infix: %s" % op
         right, parser = parser.parse_expr(outer=Everything)
@@ -239,11 +240,11 @@ class Language(object):
         self.suffix = OrderedDict()
         default = LiteralRule('literal', -1)
         self.prefix = defaultdict(lambda: default)
-        self.keywords = OrderedDict()
         self.literals = OrderedDict()
-        self.operators = OrderedDict()
+        self.operators = set()
         self.ignored = OrderedDict()
         self.whitespace = OrderedDict()
+        self._rx = None
 
     def parse(self, source):
         lexer = RegexLexer(self.rx(), source)
@@ -251,13 +252,23 @@ class Language(object):
         item, parser = parser.parse_expr(outer=Everything)
 
         if parser:
-            print(item)
+            #print(item)
             raise SyntaxErr("left over lexer: %s"%source[parser.pos():])
 
         return item
 
-    _rx = re.compile(r'\s*(\S+)\s*')
     def rx(self):
+        if not self._rx:
+            ops = sorted(self.operators, key=len, reverse=True)
+            literals = list(self.literals.values())
+            rx = r'\s*((?P<operator>{})|(?P<literal>{}))\s*'.format(
+                "|".join(re.escape(o) for o in ops),
+                "|".join(literals),
+            )
+            #print(rx)
+            rx = re.compile(rx, re.U)
+            self._rx = rx, dict(((v, k) for k,v in rx.groupindex.items()))
+
         return self._rx
 
     def add_prefix(self, rule):
@@ -273,22 +284,36 @@ class Language(object):
         return self.prefix.get(token.text)
 
     def def_block_rule(self, p, start, end):
-        self.add_prefix(BlockRule(p, start, end))
+        rule = BlockRule(p, start, end)
+        self.prefix[rule.op] = rule
+        self.operators.add(start)
+        self.operators.add(end)
 
     def def_postfix_block_rule(self, p, start, end):
-        self.add_suffix(PostfixBlockRule(p, start, end))
+        rule = PostfixBlockRule(p, start, end)
+        self.suffix[rule.op] = rule
+        self.operators.add(start)
+        self.operators.add(end)
 
     def def_postfix_rule(self, p, op):
-        self.add_suffix(PostfixRule(p, op))
+        rule = PostfixRule(p, op)
+        self.suffix[rule.op] = rule
+        self.operators.add(rule.op)
 
     def def_prefix_rule(self, p, op):
-        self.add_prefix(PrefixRule(p, op))
+        rule = PrefixRule(p, op)
+        self.prefix[rule.op] = rule
+        self.operators.add(rule.op)
 
     def def_infix_rule(self,p,op):
-        self.add_suffix(InfixRule(p, op))
+        rule = InfixRule(p, op)
+        self.suffix[rule.op] = rule
+        self.operators.add(rule.op)
     
     def def_rinfix_rule(self,p,op):
-        self.add_suffix(RInfixRule(p, op))
+        rule = RInfixRule(p, op)
+        self.suffix[rule.op] = rule
+        self.operators.add(rule.op)
 
     def def_whitespace(self, name, rx):
         pass
@@ -298,7 +323,7 @@ class Language(object):
 
     def def_literal(self, name, rx):
         rx = re.compile(rx, re.X).pattern
-        self.literals[name] = pattern
+        self.literals[name] = rx
     
     def def_control(self, name, rx): 
         pass
@@ -314,13 +339,13 @@ class Language(object):
 
     def bootstrap(self):
         self.def_literal("number",r"\d[\d_]*")
-        self.def_literal("identifier",r"[\w]*")
+        self.def_literal("identifier",r"\w+")
         self.def_block_rule(900,'(',')')
         self.def_block_rule(900,'{','}')
         self.def_block_rule(900,'[',']')
         
         self.def_postfix_block_rule(800,'(',')')
-        self.def_postfix_block_rule(800,'(','}')
+        self.def_postfix_block_rule(800,'{','}')
         self.def_postfix_block_rule(800,'[',']')
         
         self.def_rinfix_rule(700, '**')
@@ -373,6 +398,6 @@ language.bootstrap()
 for test in streams.split("\n"):
     if test:
         print(test)
-        print(language.parse(test))
+        print(language.parse(test.strip()))
         print()
 
