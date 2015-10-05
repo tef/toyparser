@@ -1,3 +1,4 @@
+from __future__ import print_function, unicode_literals
 """
 An operator precedence parser that handles expressions.
 
@@ -17,7 +18,9 @@ after we've parsed an item
 """
 
 
-from collections import namedtuple, OrderedDict
+from collections import namedtuple, OrderedDict, defaultdict
+from functools import partial
+import re
 
 class SyntaxErr(Exception):
     pass
@@ -25,9 +28,17 @@ class SyntaxErr(Exception):
 # Table driven parser/lexer cursors.
 # These cursors are immutable, and functions like next() return new cursors.
 
-class LexerCursor(object):
-    def __init__(self, lang, source, pos=0):
-        self.lang = lang
+Token = namedtuple('token','name text pos line col')
+Token.__str__ = lambda self: self.text
+Token.whitespace = partial(Token, 'whitespace')
+Token.terminator = partial(Token, 'terminator')
+Token.literal = partial(Token, 'literal')
+Token.keyword = partial(Token, 'keyword')
+Token.operator = partial(Token, 'operator')
+
+Position = namedtuple('pos', 'pos line col')
+class StringLexer(object):
+    def __init__(self, source, pos=0):
         self.source = source
         self.pos = pos 
     
@@ -37,15 +48,40 @@ class LexerCursor(object):
     def next(self):
         pos = self.pos + 1
         if pos < len(self.source):
-            return LexerCursor(self.lang, self.source, pos)
-
-    def __nonzero__(self):
-        return self.pos < len(self.source)
-
-    def __eq__(self, o):
-        return self.pos == o.pos and self.source == o.source
+            return self.__class__(self.source, pos)
 
 
+
+class RegexLexer(object):
+    def __init__(self, lang, source, pos=0):
+        self.source = source
+        self.pos = pos 
+        self._current = None
+        self._next_pos = None
+        self.lang = lang
+    
+    def current(self):
+        if self._current is None:
+            match, start = self.match()
+            self._current = Token('t', match, start, -1, -1)
+        return self._current
+    
+    rx = re.compile(r'\s*(\S+)\s*')
+
+    def match(self):
+        match = self.rx.match(self.source, self.pos)
+        self._next_pos =  match.end(0)
+        return match.group(1), match.start(1)
+            
+
+    def next(self):
+        pos = self._next_pos or self.match()[1]
+        if pos < len(self.source):
+            return self.__class__(self.lang, self.source, pos)
+    pass
+
+class OffsideFilter(object):
+    pass
 
 class ParserCursor(object):
     def __init__(self, language, lexer, pos=0):
@@ -58,10 +94,8 @@ class ParserCursor(object):
     def pos(self):
         if self.lexer:
             return self.lexer.pos
-        else:
-            return -1
         
-    def next(self):
+    def next(self, skip_whitespace=True):
         lexer = self.lexer.next()
         return ParserCursor(self.lang, lexer)
 
@@ -69,7 +103,7 @@ class ParserCursor(object):
         return self.current_token(), self.next()
 
     def accept(self, e):
-        if e == self.current_token():
+        if e == self.current_token().text:
             return self.next()
         else:
             raise SyntaxErr("expecting: %s, got %s"%(e, self.current_token()))
@@ -88,8 +122,8 @@ class ParserCursor(object):
         pos = self.pos()
 
         rule = self.lang.get_prefix_rule(first, outer)
-        print "parse: first:%s pos:%d" %(first, self.pos())
-        if rule: # beginning of a rule
+        #print "parse: first:%s pos:%d" %(first, self.pos())
+        if rule and rule.captured_by(outer): # beginning of a rule
             item, parser = rule.parse_prefix(self, outer)
         else:
             item, parser = self.pop()
@@ -99,7 +133,7 @@ class ParserCursor(object):
             first = parser.current_token()
             pos = parser.pos()
 
-            print "parse: suffix first:%s pos:%d" %(first, parser.pos())
+            #print "parse: suffix first:%s pos:%d" %(first, parser.pos())
             rule = self.lang.get_suffix_rule(first, outer)
             if rule and rule.captured_by(outer):
                 item, parser = rule.parse_suffix(item, parser, outer)
@@ -110,6 +144,7 @@ class ParserCursor(object):
 
 # Parse Rules 
 Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
+
 
 class Block(namedtuple('block', 'op item close')):
     def __str__(self):
@@ -122,7 +157,7 @@ class BlockRule(namedtuple('rule', 'precedence op end_char')):
     def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
         item, parser = parser.parse_expr(outer=Everything)
-        print "parse_block: item: %s pos:%d" %(item, parser.pos())
+        # print "parse_block: item: %s pos:%d" %(item, parser.pos())
         parser = parser.accept(self.end_char)
         return Block(self.op, item, self.end_char), parser
     
@@ -132,12 +167,12 @@ class Prefix(namedtuple('prefix', 'op right')):
 
 class PrefixRule(namedtuple('rule', 'precedence op')):
     def captured_by(self, rule):
-        return true
+        return True
 
     def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
         new_item, parser = parser.parse_expr(outer=self)
-        print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos())
+        # print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos())
         return Prefix(self.op, new_item), parser
 
 
@@ -152,7 +187,7 @@ class InfixRule(namedtuple('rule','precedence op')):
     def parse_suffix(self, item, parser, outer):
         left = item
         parser = parser.accept(self.op)
-        print "infix: item: %s pos:%d" %(item, parser.pos())
+        # print "infix: item: %s pos:%d" %(item, parser.pos())
         right, parser = parser.parse_expr(outer=self)
         return Infix(self.op, left, right), parser
 
@@ -189,15 +224,13 @@ class Postfix(namedtuple('postfix', 'op left')):
     def __str__(self):
         return "<%s %s>"%(self.left, self.op) 
 
-class DefaultRule(namedtuple('expr', 'op precedence')):
+class LiteralRule(namedtuple('expr', 'op precedence')):
     def captured_by(self, rule):
-        true
+        return True
 
     def parse_prefix(self, parser, outer):
         return parser.pop()
 
-    def parse_suffix(self, item, parser, outer):
-        return item, parser
 
 
 
@@ -205,7 +238,8 @@ class Language(object):
     """ One big lookup table to save us from things """
     def __init__(self):
         self.suffix = OrderedDict()
-        self.prefix = OrderedDict()
+        default = LiteralRule('literal', -1)
+        self.prefix = defaultdict(lambda: default)
         self.keywords = OrderedDict()
         self.literals = OrderedDict()
         self.operators = OrderedDict()
@@ -213,25 +247,27 @@ class Language(object):
         self.whitespace = OrderedDict()
 
     def parse(self, source):
-        lexer = LexerCursor(self, source)
+        lexer = RegexLexer(self, source)
         parser = ParserCursor(self, lexer)
         item, parser = parser.parse_expr(outer=Everything)
 
         if parser:
-            raise SyntaxErr("left over lexer: %s"%parser.source)
+            print(item)
+            raise SyntaxErr("left over lexer: %s"%source[parser.pos():])
 
         return item
+
     def add_prefix(self, rule):
         self.prefix[rule.op] = rule
 
     def add_suffix(self, rule):
         self.suffix[rule.op] = rule
 
-    def get_suffix_rule(self, key, outer):
-        return self.suffix.get(key)
+    def get_suffix_rule(self, token, outer):
+        return self.suffix.get(token.text)
 
-    def get_prefix_rule(self, key, outer):
-        return self.prefix.get(key)
+    def get_prefix_rule(self, token, outer):
+        return self.prefix.get(token.text)
 
     def def_block_rule(self, p, start, end):
         self.add_prefix(BlockRule(p, start, end))
@@ -314,23 +350,23 @@ class Language(object):
 
 
 
-streams = [
-    ['1', '*', '2', '+', '3', '*', '4'],
-    ['(', '1', '+', '2', ')', '*', '3'],
-    ['1', '**', '2', '**', 3],
-    ['3','+','1', '**', '2', '**', '3', '+', 4],
-    "1 + 2 + 3 * 4 * 5 * 6".split(),
-    ['+', '1','*',2],
-    ['+', '(', '1','*','2',')'],
-    ['x','[','1',']'],
-
-]
+streams = """
+1 + 2
+1 + 2 + 3 + 4 + 5
+1 + 2 * 3 + 4
+2 ** 3 ** 4
+- 2 ** 3 ** 4 * 8
+x [ 0 ] * 9
+( 1 + 2 ) * 3
+1*2+3+x[0][1]{2}
+"""
 
 language = Language()
 language.bootstrap()
 
-for test in streams:
-    print test
-    print language.parse(test)
-    print 
+for test in streams.split("\n"):
+    if test:
+        print(test)
+        print(language.parse(test))
+        print()
 
