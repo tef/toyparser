@@ -98,6 +98,7 @@ def token_filter(*types):
 
         def pos(self):
             return self.lexer.pos()
+
     return TokenFilter
 
 class ParserCursor(object):
@@ -254,21 +255,7 @@ class Language(object):
         self.operators = set()
         self.ignored = OrderedDict()
         self.whitespace = OrderedDict()
-        self.newline = r"\r\n|\n|\r"
         self._rx = None
-
-    def parse(self, source):
-        rx, names = self.rx()
-        pos = Position(off=0, line_off=0, line=1,col=1)
-        lexer = RegexLexer(rx, names, source, pos)
-        filter = token_filter("whitespace")
-        parser = ParserCursor(self, filter(lexer))
-        item, parser = parser.parse_expr(outer=Everything)
-
-        if parser:
-            raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos():]))
-
-        return item
 
     def rx(self):
         if not self._rx:
@@ -277,7 +264,6 @@ class Language(object):
             whitespace = list(self.whitespace.values())
 
             rx = [
-                ('newline', self.newline),
                 ('whitespace', "|".join(whitespace)),
                 ('operator', "|".join(ops)),
             ]
@@ -304,6 +290,21 @@ class Language(object):
             return self.prefix[token.text]
         else:   
             return self.literal_rule
+
+    def parse(self, source):
+        rx, names = self.rx()
+        pos = Position(off=0, line_off=0, line=1,col=1)
+        
+        lexer = RegexLexer(rx, names, source, pos)
+        filter = token_filter("whitespace")
+        parser = ParserCursor(self, filter(lexer))
+
+        item, parser = parser.parse_expr(outer=Everything)
+
+        if parser:
+            raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos():]))
+
+        return item
 
 
     def def_whitespace(self, name, rx):
