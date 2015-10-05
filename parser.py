@@ -26,26 +26,10 @@ class SyntaxErr(Exception):
     pass
 
 # Table driven parser/lexer cursors.
-# These cursors are immutable, and functions like next() return new cursors.
+# These cursors are (mostly) immutable, and functions like next() return new cursors.
 
 Token = namedtuple('token','name text pos line col')
-Token.__str__ = lambda self:str((self.name,self.text))
-
-Position = namedtuple('pos', 'pos line col')
-class StringLexer(object):
-    def __init__(self, source, pos=0):
-        self.source = source
-        self.pos = pos 
-    
-    def current(self):
-        return self.source[self.pos]
-
-    def next(self):
-        pos = self.pos + 1
-        if pos < len(self.source):
-            return self.__class__(self.source, pos)
-
-
+Token.__str__ = lambda self:"{}_{}".format(self.text, self.name[0])
 
 class RegexLexer(object):
     def __init__(self, lang, source, pos=0):
@@ -59,7 +43,6 @@ class RegexLexer(object):
         if self._current is None:
             self._current = self.match()
         return self._current
-    
 
     def match(self):
         match = self.lang[0].match(self.source, self.pos)
@@ -76,29 +59,29 @@ class RegexLexer(object):
         if pos < len(self.source):
             return self.__class__(self.lang, self.source, pos)
 
-class WhitespaceFilter(object):
-    def __init__(self, lexer):
-        self.lexer = lexer
-    
-    def current(self):
-        while self.lexer: 
-            current = self.lexer.current()
-            if current.name == 'whitespace':
-                self.lexer = self.lexer.next()
-            else:
-                return current
+def token_filter(*types):
+    class TokenFilter(object):
+        def __init__(self, lexer):
+            self.lexer = lexer
         
-            
+        def current(self):
+            while self.lexer: 
+                current = self.lexer.current()
+                if current.name in types:
+                    self.lexer = self.lexer.next()
+                else:
+                    return current
 
-    def next(self):
-        lexer = self.lexer.next()
-        if lexer:
-            lexer.current()
-            return WhitespaceFilter(lexer)
+        def next(self):
+            lexer = self.lexer.next()
+            if lexer:
+                lexer.current()
+                return self.__class__(lexer)
 
-    @property
-    def pos(self):
-        return self.lexer.pos
+        @property
+        def pos(self):
+            return self.lexer.pos
+    return TokenFilter
 
 class ParserCursor(object):
     def __init__(self, language, lexer, pos=0):
@@ -155,7 +138,6 @@ class ParserCursor(object):
 
 # Parse Rules 
 Everything = namedtuple('Everything','precedence captured_by')(0, (lambda r: False))
-
 
 class Block(namedtuple('block', 'op item close')):
     def __str__(self):
@@ -244,29 +226,66 @@ class LiteralRule(namedtuple('expr', 'op precedence')):
         return parser.pop()
 
 
-
-
 class Language(object):
     """ One big lookup table to save us from things """
     def __init__(self):
-        self.suffix = OrderedDict()
         self.literal_rule = LiteralRule('literal', -1)
+        self.suffix = OrderedDict()
         self.prefix = OrderedDict()
+        self.keywords = OrderedDict()
         self.literals = OrderedDict()
         self.operators = set()
         self.ignored = OrderedDict()
         self.whitespace = OrderedDict()
+        self.newline = r"\r\n|\n|\r"
         self._rx = None
 
     def parse(self, source):
         lexer = RegexLexer(self.rx(), source)
-        parser = ParserCursor(self, WhitespaceFilter(lexer))
+        filter = token_filter("whitespace")
+        parser = ParserCursor(self, filter(lexer))
         item, parser = parser.parse_expr(outer=Everything)
 
         if parser:
             raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos():]))
 
         return item
+
+    def rx(self):
+        if not self._rx:
+            ops = sorted(self.operators, key=len, reverse=True)
+            ops =[ re.escape(o).replace(' ','\s+') for o in ops]
+            whitespace = list(self.whitespace.values())
+
+            rx = [
+                ('newline', self.newline),
+                ('whitespace', "|".join(whitespace)),
+                ('operator', "|".join(ops)),
+            ]
+            for key, value in self.literals.items():
+                rx.append((key, value))
+            
+            print(rx)
+            rx= "|".join("(?P<{}>{})".format(*a) for a in rx)
+
+            rx = r'({})'.format(rx)
+
+            print(rx)
+
+            rx = re.compile(rx, re.U + re.X)
+            self._rx = rx, dict(((v, k) for k,v in rx.groupindex.items()))
+
+        return self._rx
+
+    def get_suffix_rule(self, token, outer):
+        return self.suffix.get(token.text)
+
+    def get_prefix_rule(self, token, outer):
+        if token.name in ("operator", "keyword"):
+            return self.prefix[token.text]
+        else:   
+            return self.literal_rule
+
 
     def def_whitespace(self, name, rx):
         rx = re.compile(rx, re.U).pattern
@@ -290,36 +309,6 @@ class Language(object):
 
     def def_comment(self, name, rx):
         pass
-
-
-    def rx(self):
-        if not self._rx:
-            ops = sorted(self.operators, key=len, reverse=True)
-            literals = list(self.literals.values())
-            whitespace = list(self.whitespace.values())
-            rx = r'''(
-                (?P<whitespace>{})|
-                (?P<operator>{})|
-                (?P<literal>{})
-                )
-            '''.format(
-                "|".join(whitespace),
-                "|".join(re.escape(o).replace(' ','\s+') for o in ops),
-                "|".join(literals),
-            )
-            rx = re.compile(rx, re.U + re.X)
-            self._rx = rx, dict(((v, k) for k,v in rx.groupindex.items()))
-
-        return self._rx
-
-    def get_suffix_rule(self, token, outer):
-        return self.suffix.get(token.text)
-
-    def get_prefix_rule(self, token, outer):
-        if token.name in ("operator", "keyword"):
-            return self.prefix[token.text]
-        else:   
-            return self.literal_rule
 
     def def_block_rule(self, p, start, end):
         rule = BlockRule(p, start, end)
