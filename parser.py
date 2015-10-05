@@ -250,7 +250,7 @@ class Language(object):
         self.literal_rule = LiteralRule('literal', -1)
         self.suffix = OrderedDict()
         self.prefix = OrderedDict()
-        self.keywords = OrderedDict()
+        self.nofixs = OrderedDict()
         self.literals = OrderedDict()
         self.operators = set()
         self.ignored = OrderedDict()
@@ -269,11 +269,14 @@ class Language(object):
             ]
             for key, value in self.literals.items():
                 rx.append((key, value))
+
             
             print(rx)
             rx= "|".join("(?P<{}>{})".format(*a) for a in rx)
+            
+            ignored = "|".join(self.ignored.values())
 
-            rx = r'({})'.format(rx)
+            rx = r'(?:{})* ({}) (?:{})*'.format(ignored, rx, ignored)
 
             print(rx)
 
@@ -286,7 +289,7 @@ class Language(object):
         return self.suffix.get(token.text)
 
     def get_prefix_rule(self, token, outer):
-        if token.name in ("operator", "keyword"):
+        if token.name in ("operator", "nofix"):
             return self.prefix[token.text]
         else:   
             return self.literal_rule
@@ -311,24 +314,23 @@ class Language(object):
         rx = re.compile(rx, re.U).pattern
         self.whitespace[name] = rx
 
-    def def_keyword(self, name, rx):
-        pass
+    def def_nofix(self, name):
+        self.operators.add(name)
 
     def def_literal(self, name, rx):
         rx = re.compile(rx, re.U).pattern
         self.literals[name] = rx
-    
-    def def_control(self, name, rx): 
-        pass
+
+    def def_keyword(self, name):
+        self.literals[name] = re.escape(name).replace(" ","\ ")
 
     def def_ignored(self, name, rx):
-        pass
-
-    def def_error(self, name,rx):
-        pass
+        rx = re.compile(rx, re.U).pattern
+        self.ignored[name] = rx
 
     def def_comment(self, name, rx):
-        pass
+        rx = re.compile(rx, re.U).pattern
+        self.comment[name] = rx
 
     def def_block_rule(self, p, start, end):
         rule = BlockRule(p, start, end)
