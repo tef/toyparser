@@ -276,8 +276,10 @@ class Language(object):
             raise SyntaxErr("item {}, left over {}"%(item,source[parser.pos():]))
 
         return item
+
     def def_whitespace(self, name, rx):
-        pass
+        rx = re.compile(rx, re.X).pattern
+        self.whitespace[name] = rx
 
     def def_keyword(self, name, rx):
         pass
@@ -303,12 +305,19 @@ class Language(object):
         if not self._rx:
             ops = sorted(self.operators, key=len, reverse=True)
             literals = list(self.literals.values())
-            rx = r'\s*((?P<operator>{})|(?P<literal>{}))\s*'.format(
+            whitespace = list(self.literals.values())
+            rx = r'''
+                (?P<whitespace>{})|
+                (?P<operator>{})|
+                (?P<literal>{})
+                )\s*
+            '''.format(
+                "|".join(whitespace),
                 "|".join(re.escape(o) for o in ops),
                 "|".join(literals),
             )
             #print(rx)
-            rx = re.compile(rx, re.U)
+            rx = re.compile(rx, re.U & re.X)
             self._rx = rx, dict(((v, k) for k,v in rx.groupindex.items()))
 
         return self._rx
@@ -352,6 +361,8 @@ class Language(object):
         self.operators.add(rule.op)
 
     def bootstrap(self):
+        self.def_whitespace("newline", r"\n") 
+        self.def_whitespace("newline", r"\s+") 
         self.def_literal("number",r"\d[\d_]*")
         self.def_literal("identifier",r"\w+")
         self.def_block_rule(900,'(',')')
