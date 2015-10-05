@@ -66,10 +66,9 @@ class RegexLexer(object):
             self._current = Token('t', match, start, -1, -1)
         return self._current
     
-    rx = re.compile(r'\s*(\S+)\s*')
 
     def match(self):
-        match = self.rx.match(self.source, self.pos)
+        match = self.lang.match(self.source, self.pos)
         self._next_pos =  match.end(0)
         return match.group(1), match.start(1)
             
@@ -247,7 +246,7 @@ class Language(object):
         self.whitespace = OrderedDict()
 
     def parse(self, source):
-        lexer = RegexLexer(self, source)
+        lexer = RegexLexer(self.rx(), source)
         parser = ParserCursor(self, lexer)
         item, parser = parser.parse_expr(outer=Everything)
 
@@ -256,6 +255,10 @@ class Language(object):
             raise SyntaxErr("left over lexer: %s"%source[parser.pos():])
 
         return item
+
+    _rx = re.compile(r'\s*(\S+)\s*')
+    def rx(self):
+        return self._rx
 
     def add_prefix(self, rule):
         self.prefix[rule.op] = rule
@@ -294,11 +297,9 @@ class Language(object):
         pass
 
     def def_literal(self, name, rx):
-        pass
+        rx = re.compile(rx, re.X).pattern
+        self.literals[name] = pattern
     
-    def def_operator(self, name, rx):
-        pass
-
     def def_control(self, name, rx): 
         pass
 
@@ -308,7 +309,12 @@ class Language(object):
     def def_error(self, name,rx):
         pass
 
+    def def_comment(self, name, rx):
+        pass
+
     def bootstrap(self):
+        self.def_literal("number",r"\d[\d_]*")
+        self.def_literal("identifier",r"[\w]*")
         self.def_block_rule(900,'(',')')
         self.def_block_rule(900,'{','}')
         self.def_block_rule(900,'[',']')
