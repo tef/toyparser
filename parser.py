@@ -28,36 +28,54 @@ class SyntaxErr(Exception):
 # Table driven parser/lexer cursors.
 # These cursors are (mostly) immutable, and functions like next() return new cursors.
 
-Token = namedtuple('token','name text pos line col')
+Token = namedtuple('token','name text position')
 Token.__str__ = lambda self:"{}_{}".format(self.text, self.name[0])
 
+Position = namedtuple('Position','off line_off line col')
+
 class RegexLexer(object):
-    def __init__(self, lang, source, pos=0):
+    def __init__(self, rx, names, source, position):
         self.source = source
-        self.pos = pos 
+        self.position = position
         self._current = None
-        self._next_pos = None
-        self.lang = lang
+        self._next = None
+        self.rx = rx
+        self.names = names
+
+    def pos(self):
+        return self.position
     
     def current(self):
         if self._current is None:
             self._current = self.match()
         return self._current
 
+
     def match(self):
-        match = self.lang[0].match(self.source, self.pos)
+        match = self.rx.match(self.source, self.position.off)
 
         for num, result in enumerate(match.groups()[1:],2):
             if result:
-                name = self.lang[1][num] 
-                self._next_pos =  match.end(0)
-                return Token(name, result, match.start(num), -1, -1)
-            
+                name = self.names[num] 
+                pos = Position(match.start(num), 0, 0 ,0)
+                token =Token(name, result, pos)
+
+                pos = match.end(0)
+                if pos < len(self.source):
+                    self._next = self.__class__(
+                        self.rx, self.names, self.source, 
+                        Position(pos, 0,0,0)
+                    )
+                else:
+                    self._next = ()
+                
+                return token
 
     def next(self):
-        pos = self._next_pos or self.match()[1]
-        if pos < len(self.source):
-            return self.__class__(self.lang, self.source, pos)
+        if self._next is None:
+            self.match()
+        return self._next
+
 
 def token_filter(*types):
     class TokenFilter(object):
@@ -78,13 +96,12 @@ def token_filter(*types):
                 lexer.current()
                 return self.__class__(lexer)
 
-        @property
         def pos(self):
-            return self.lexer.pos
+            return self.lexer.pos()
     return TokenFilter
 
 class ParserCursor(object):
-    def __init__(self, language, lexer, pos=0):
+    def __init__(self, language, lexer):
         self.lexer = lexer
         self.lang = language
 
@@ -93,7 +110,7 @@ class ParserCursor(object):
 
     def pos(self):
         if self.lexer:
-            return self.lexer.pos
+            return self.lexer.pos()
         
     def next(self):
         lexer = self.lexer.next()
@@ -241,7 +258,9 @@ class Language(object):
         self._rx = None
 
     def parse(self, source):
-        lexer = RegexLexer(self.rx(), source)
+        rx, names = self.rx()
+        pos = Position(off=0, line_off=0, line=1,col=1)
+        lexer = RegexLexer(rx, names, source, pos)
         filter = token_filter("whitespace")
         parser = ParserCursor(self, filter(lexer))
         item, parser = parser.parse_expr(outer=Everything)
@@ -344,7 +363,7 @@ class Language(object):
 
     def bootstrap(self):
         self.def_whitespace("newline", r"\n") 
-        self.def_whitespace("newline", r"\s+") 
+        self.def_whitespace("space", r"\s+") 
         self.def_literal("number",r"\d[\d_]*")
         self.def_literal("identifier",r"\w+")
         self.def_block_rule(900,'(',')')
@@ -397,6 +416,8 @@ streams = """
 x [ 0 ] * 9
 ( 1 + 2 ) * 3
 1*2+3+x[0][1]{2}
+
+
 """
 
 language = Language()
