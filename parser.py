@@ -128,6 +128,10 @@ class ParserCursor(object):
     def __eq__(self, o):
         return self.lexer == o.lexer
 
+    def parse_exprs(self):
+        
+        expr = self.parse_expr(self, outer=Everything)
+
     def parse_expr(self, outer):
         item = self.current_token()
         pos = self.pos()
@@ -318,12 +322,12 @@ class Language(object):
         filter = token_filter("whitespace")
         parser = ParserCursor(self, filter(lexer))
 
-        item, parser = parser.parse_expr(outer=Everything)
+        items, parser = parser.parse_stmts()
 
         if parser:
             raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos().off:]))
 
-        return item
+        return items
 
 
     def def_whitespace(self, name, rx):
@@ -451,6 +455,6 @@ language.bootstrap()
 for t in test.split("\n"):
     if t:
         print(t)
-        print(language.parse(t))
+        [print(line) for item in language.parse(t)]
         print()
 
