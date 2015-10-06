@@ -32,10 +32,11 @@ Token = namedtuple('token','name text position')
 Token.__str__ = lambda self:"{}_{}".format(self.text, self.name[0])
 
 class Position(namedtuple('Position','off line_off line col')):
-    newlines = re.compile(r'\r\|\n|\r\n') # Todo: unicode
+    newlines = re.compile(r'\r|\n|\r\n') # Todo: unicode
     def count_lines(self, source, offset):
         line = self.line
         line_off = self.line_off
+        #print('source', [source[self.off:offset+1]], self.off, offset, self.newlines.pattern)
         for match in self.newlines.finditer(source, self.off, offset):
             line += 1;
             line_off = match.end()
@@ -57,7 +58,7 @@ class RegexLexer(object):
     def current(self):
         if self._current is None:
             self._current, pos = self.rx(self.source, self.position)
-            if pos.off < len(self.source):
+            if self._current and pos.off < len(self.source):
                 self._next = self.__class__(
                     self.rx, self.source, pos
                 )
@@ -128,9 +129,25 @@ class ParserCursor(object):
     def __eq__(self, o):
         return self.lexer == o.lexer
 
-    def parse_exprs(self):
-        
-        expr = self.parse_expr(self, outer=Everything)
+    def parse_stmts(self):
+        exprs =[]
+        parser = self
+        pos = -1
+        while parser:
+            expr, parser = parser.parse_expr(outer=Everything)
+            #print([expr])
+            pos = parser.pos()
+            if expr:
+                exprs.append(expr)
+                #print('expr',[expr])
+            if parser and parser.current_token().name == 'terminator':
+                while parser and parser.current_token().name =='terminator':
+                    #print('next', [parser.current_token()])
+                    parser = parser.next()
+            else:
+                break
+
+        return exprs, parser
 
     def parse_expr(self, outer):
         item = self.current_token()
@@ -139,6 +156,7 @@ class ParserCursor(object):
 
         if rule and rule.captured_by(outer): # beginning of a rule
             item, parser = rule.parse_prefix(self, outer)
+            #print(rule,item, parser)
         else:
             return None, self
 
@@ -168,7 +186,7 @@ class BlockRule(namedtuple('rule', 'precedence op end_char')):
     def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
         item, parser = parser.parse_expr(outer=Everything)
-        # print "parse_block: item: %s pos:%d" %(item, parser.pos())
+        #print "parse_block: item: %s pos:%d" %(item, parser.pos())
         parser = parser.accept(self.end_char)
         return Block(self.op, item, self.end_char), parser
     
@@ -183,7 +201,7 @@ class PrefixRule(namedtuple('rule', 'precedence op')):
     def parse_prefix(self, parser, outer):
         parser = parser.accept(self.op)
         new_item, parser = parser.parse_expr(outer=self)
-        # print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos())
+        #print "PrefixRule: item: %s pos:%d" %(new_item, parser.pos())
         return Prefix(self.op, new_item), parser
 
 
@@ -198,7 +216,7 @@ class InfixRule(namedtuple('rule','precedence op')):
     def parse_suffix(self, item, parser, outer):
         left = item
         parser = parser.accept(self.op)
-        # print "infix: item: %s pos:%d" %(item, parser.pos())
+        #print "infix: item: %s pos:%d" %(item, parser.pos())
         right, parser = parser.parse_expr(outer=self)
         return Infix(self.op, left, right), parser
 
@@ -244,15 +262,9 @@ class TokenRule(namedtuple('expr', 'op precedence')):
         return parser.pop()
 
 class TerminatorRule(namedtuple('expr','op precedence')):
-
     def captured_by(self, outer):
+        #print(outer, self.precedence)
         return outer.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
-
-    def parse_prefix(self, parser, outer):
-        return None
-
-    def parse_suffix(self, item, parser, outer):
-        return item, parser
 
 class Language(object):
     """ One big lookup table to save us from things """
@@ -264,6 +276,7 @@ class Language(object):
         self.operators = set()
         self.ignored = set()
         self.whitespace = OrderedDict()
+        self.terminators = set()
         self.comments = set()
         self._rx = None
         self._names = None
@@ -271,15 +284,15 @@ class Language(object):
     def rx(self):
         ops = sorted(self.operators, key=len, reverse=True)
         ops =[ re.escape(o).replace(' ','\s+') for o in ops]
-        whitespace = list(self.whitespace.values())
+
 
         rx = [
-            ('whitespace', "|".join(whitespace)),
+            ('terminator', "|".join(self.terminators)),
+            ('whitespace', "|".join(self.whitespace.values())),
             ('operator', "|".join(ops)),
         ]
         for key, value in self.literals.items():
             rx.append((key, value))
-
         
         rx= "|".join("(?P<{}>{})".format(*a) for a in rx)
         
@@ -288,7 +301,7 @@ class Language(object):
         rx = r'(?:{})* ({}) (?:{})*'.format(ignored, rx, ignored)
 
         rx = re.compile(rx, re.U + re.X)
-        print(rx.pattern)
+        #print(rx.pattern)
         self._rx = rx
         self._names = dict(((v, k) for k,v in rx.groupindex.items()))
 
@@ -299,35 +312,41 @@ class Language(object):
 
         match = self._rx.match(source, position.off)
 
+        if not match:
+            return Token('error', 'unknown', position), position
+
         for num, result in enumerate(match.groups()[1:],2):
             if result:
                 name = self._names[num] 
+                #print(position.off, match.start(num), match.end(0))
                 pos =  position.count_lines(source, match.start(num))
                 next_pos = pos.count_lines(source, match.end(0))
                 token = Token(name, result, pos)
+                #print("pos",pos, next_pos)
                 return token, next_pos
 
     def get_suffix_rule(self, token, outer):
         return self.suffix.get(token.text)
 
     def get_prefix_rule(self, token, outer):
-        if token.name in ("operator",):
+        if token.name in ("operator","terminator"):
             return self.prefix[token.text]
-        else:   
+        else:
             return self.literal_rule
 
     def parse(self, source):
-        pos = Position(off=0, line_off=0, line=1,col=1)
-        lexer = RegexLexer(self.match, source, pos)
-        filter = token_filter("whitespace")
-        parser = ParserCursor(self, filter(lexer))
+        if source:
+            pos = Position(off=0, line_off=0, line=1,col=1)
+            lexer = RegexLexer(self.match, source, pos)
+            filter = token_filter("whitespace")
+            parser = ParserCursor(self, filter(lexer))
 
-        items, parser = parser.parse_stmts()
+            items, parser = parser.parse_stmts()
 
-        if parser:
-            raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos().off:]))
+            if parser:
+                raise SyntaxErr("item {}, left over {} at {}".format(items,source[parser.pos().off:], parser.pos()))
 
-        return items
+            return items
 
 
     def def_whitespace(self, name, rx):
@@ -348,11 +367,11 @@ class Language(object):
         self.comment[name] = rx
 
     def def_keyword(self, name):
-        # "if", "else"
         self.operators.add(name)
 
-    def def_terminator(self, p, op):
-        pass
+    def def_terminator(self, name, rx):
+        self.terminators.add(rx)
+        self.prefix[name] = TerminatorRule(name, -1)
 
     def def_block(self, p, start, end):
         rule = BlockRule(p, start, end)
@@ -387,7 +406,8 @@ class Language(object):
         self.operators.add(rule.op)
 
     def bootstrap(self):
-        self.def_whitespace("newline", r"\n") 
+        self.def_terminator("\n",r"\n") 
+        self.def_terminator(";", r";") 
         self.def_whitespace("space", r"\s+") 
         self.def_literal("number",r"\d[\d_]*")
         self.def_literal("identifier",r"\w+")
@@ -444,17 +464,17 @@ test = """
 x [ 0 ] * 9
 ( 1 + 2 ) * 3
 1*2+3+x[0][1]{2}
-
-
 """
 
 language = Language()
 language.bootstrap()
 
 
-for t in test.split("\n"):
-    if t:
-        print(t)
-        [print(line) for item in language.parse(t)]
-        print()
+#for t in test.split("\n"):
+#    print(t)
+#    print(language.parse(t))
+#    print()
 
+print(test)
+[print(line) for line in language.parse(test)]
+print()
