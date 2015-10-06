@@ -222,18 +222,28 @@ class Postfix(namedtuple('postfix', 'op left')):
     def __str__(self):
         return "<%s %s>"%(self.left, self.op) 
 
-class LiteralRule(namedtuple('expr', 'op precedence')):
+class TokenRule(namedtuple('expr', 'op precedence')):
     def captured_by(self, rule):
         return True
 
     def parse_prefix(self, parser, outer):
         return parser.pop()
 
+class TerminatorRule(namedtuple('expr','op precedence')):
+
+    def captured_by(self, outer):
+        return outer.precedence < self.precedence #(the precedence is higher, the scope is more narrow!)
+
+    def parse_prefix(self, parser, outer):
+        return None
+
+    def parse_suffix(self, item, parser, outer):
+        return item, parser
 
 class Language(object):
     """ One big lookup table to save us from things """
     def __init__(self):
-        self.literal_rule = LiteralRule('literal', -1)
+        self.literal_rule = TokenRule('literal', 0)
         self.suffix = OrderedDict()
         self.prefix = OrderedDict()
         self.literals = OrderedDict()
@@ -271,6 +281,7 @@ class Language(object):
     def match(self, source, position):
         if not self._rx:
             self.rx()
+
         match = self._rx.match(source, position.off)
 
         for num, result in enumerate(match.groups()[1:],2):
@@ -299,7 +310,7 @@ class Language(object):
         item, parser = parser.parse_expr(outer=Everything)
 
         if parser:
-            raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos():]))
+            raise SyntaxErr("item {}, left over {}".format(item,source[parser.pos().off:]))
 
         return item
 
@@ -308,17 +319,6 @@ class Language(object):
         rx = re.compile(rx, re.U).pattern
         self.whitespace[name] = rx
 
-    def def_nofix(self, name):
-        # true, false, etc.
-        self.literals[name] = re.escape(name).replace(" ","\ ")
-
-    def def_keyword(self, name):
-        # "if", "else"
-        self.operators.add(name)
-
-    def def_terminator(self, p, name):
-        # , ; 
-        pass
 
     def def_literal(self, name, rx):
         rx = re.compile(rx, re.U).pattern
@@ -332,34 +332,41 @@ class Language(object):
         rx = re.compile(rx, re.U).pattern
         self.comment[name] = rx
 
-    def def_block_rule(self, p, start, end):
+    def def_keyword(self, name):
+        # "if", "else"
+        self.operators.add(name)
+
+    def def_terminator(self, p, op):
+        pass
+
+    def def_block(self, p, start, end):
         rule = BlockRule(p, start, end)
         self.prefix[rule.op] = rule
         self.operators.add(start)
         self.operators.add(end)
 
-    def def_postfix_block_rule(self, p, start, end):
+    def def_postfix_block(self, p, start, end):
         rule = PostfixBlockRule(p, start, end)
         self.suffix[rule.op] = rule
         self.operators.add(start)
         self.operators.add(end)
 
-    def def_postfix_rule(self, p, op):
+    def def_postfix(self, p, op):
         rule = PostfixRule(p, op)
         self.suffix[rule.op] = rule
         self.operators.add(rule.op)
 
-    def def_prefix_rule(self, p, op):
+    def def_prefix(self, p, op):
         rule = PrefixRule(p, op)
         self.prefix[rule.op] = rule
         self.operators.add(rule.op)
 
-    def def_infix_rule(self,p,op):
+    def def_infix(self,p,op):
         rule = InfixRule(p, op)
         self.suffix[rule.op] = rule
         self.operators.add(rule.op)
     
-    def def_rinfix_rule(self,p,op):
+    def def_rinfix(self,p,op):
         rule = RInfixRule(p, op)
         self.suffix[rule.op] = rule
         self.operators.add(rule.op)
@@ -369,48 +376,51 @@ class Language(object):
         self.def_whitespace("space", r"\s+") 
         self.def_literal("number",r"\d[\d_]*")
         self.def_literal("identifier",r"\w+")
-        self.def_block_rule(900,'(',')')
-        self.def_block_rule(900,'{','}')
-        self.def_block_rule(900,'[',']')
+        self.def_literal("true", r"true\b")
+        self.def_literal("false", r"false\b")
+        self.def_literal("null", r"null\b")
+        self.def_block(900,'(',')')
+        self.def_block(900,'{','}')
+        self.def_block(900,'[',']')
         
-        self.def_postfix_block_rule(800,'(',')')
-        self.def_postfix_block_rule(800,'{','}')
-        self.def_postfix_block_rule(800,'[',']')
+        self.def_postfix_block(800,'(',')')
+        self.def_postfix_block(800,'{','}')
+        self.def_postfix_block(800,'[',']')
         
-        self.def_rinfix_rule(700, '**')
+        self.def_rinfix(700, '**')
         
-        self.def_prefix_rule(600, '+')
-        self.def_prefix_rule(600, '-')
-        self.def_prefix_rule(600, '~')
-        self.def_prefix_rule(600, '!')
+        self.def_prefix(600, '+')
+        self.def_prefix(600, '-')
+        self.def_prefix(600, '~')
+        self.def_prefix(600, '!')
         
-        self.def_infix_rule(500, '*')
-        self.def_infix_rule(500, '/')
-        self.def_infix_rule(500, '//')
-        self.def_infix_rule(500, '%')
+        self.def_infix(500, '*')
+        self.def_infix(500, '/')
+        self.def_infix(500, '//')
+        self.def_infix(500, '%')
         
-        self.def_infix_rule(400, '-')
-        self.def_infix_rule(400, '+')
+        self.def_infix(400, '-')
+        self.def_infix(400, '+')
         
-        self.def_infix_rule(300, '<<')
-        self.def_infix_rule(300, '>>')
+        self.def_infix(300, '<<')
+        self.def_infix(300, '>>')
         
-        self.def_infix_rule(220, '&')
-        self.def_infix_rule(210, '^')
-        self.def_infix_rule(200, '|')
+        self.def_infix(220, '&')
+        self.def_infix(210, '^')
+        self.def_infix(200, '|')
         
         for c in "in,not in,is,is,<,<=,>,>=,<>,!=,==".split(','):
-            self.def_infix_rule(130, c)
+            self.def_infix(130, c)
         
-        self.def_infix_rule(120, 'not')
-        self.def_infix_rule(110, 'and')
-        self.def_infix_rule(100, 'or')
+        self.def_infix(120, 'not')
+        self.def_infix(110, 'and')
+        self.def_infix(100, 'or')
         
-        self.def_rinfix_rule(0, '=')
+        self.def_rinfix(0, '=')
 
 
 
-streams = """
+test = """
 1 + 2
 1 + 2 + 3 + 4 + 5
 1 + 2 * 3 + 4
@@ -426,9 +436,10 @@ x [ 0 ] * 9
 language = Language()
 language.bootstrap()
 
-for test in streams.split("\n"):
-    if test:
-        print(test)
-        print(language.parse(test.strip()))
+
+for t in test.split("\n"):
+    if t:
+        print(t)
+        print(language.parse(t))
         print()
 
