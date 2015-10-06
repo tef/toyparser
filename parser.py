@@ -31,8 +31,18 @@ class SyntaxErr(Exception):
 Token = namedtuple('token','name text position')
 Token.__str__ = lambda self:"{}_{}".format(self.text, self.name[0])
 
-Position = namedtuple('Position','off line_off line col')
+class Position(namedtuple('Position','off line_off line col')):
+    newlines = re.compile(r'\r\|\n|\r\n') # Todo: unicode
+    def count_lines(self, source, offset):
+        line = self.line
+        line_off = self.line_off
+        for match in self.newlines.finditer(source, self.off, offset):
+            line += 1;
+            line_off = match.end()
 
+        col = (offset-line_off)+1
+        return Position(offset, line_off, line, col)
+    
 class RegexLexer(object):
     def __init__(self, rx, source, position):
         self.source = source
@@ -278,6 +288,7 @@ class Language(object):
         self._rx = rx
         self._names = dict(((v, k) for k,v in rx.groupindex.items()))
 
+
     def match(self, source, position):
         if not self._rx:
             self.rx()
@@ -287,9 +298,9 @@ class Language(object):
         for num, result in enumerate(match.groups()[1:],2):
             if result:
                 name = self._names[num] 
-                pos = Position(match.start(num), 0, 0 ,0)
+                pos =  position.count_lines(source, match.start(num))
+                next_pos = pos.count_lines(source, match.end(0))
                 token = Token(name, result, pos)
-                next_pos = Position(match.end(0), 0,0,0)
                 return token, next_pos
 
     def get_suffix_rule(self, token, outer):
