@@ -34,46 +34,32 @@ Token.__str__ = lambda self:"{}_{}".format(self.text, self.name[0])
 Position = namedtuple('Position','off line_off line col')
 
 class RegexLexer(object):
-    def __init__(self, rx, names, source, position):
+    def __init__(self, rx, source, position):
         self.source = source
         self.position = position
         self._current = None
         self._next = None
         self.rx = rx
-        self.names = names
 
     def pos(self):
         return self.position
     
     def current(self):
         if self._current is None:
-            self._current = self.match()
+            self._current, pos = self.rx(self.source, self.position)
+            if pos.off < len(self.source):
+                self._next = self.__class__(
+                    self.rx, self.source, pos
+                )
+            else:
+                self._next = ()
         return self._current
 
 
-    def match(self):
-        match = self.rx.match(self.source, self.position.off)
-
-        for num, result in enumerate(match.groups()[1:],2):
-            if result:
-                name = self.names[num] 
-                pos = Position(match.start(num), 0, 0 ,0)
-                token =Token(name, result, pos)
-
-                pos = match.end(0)
-                if pos < len(self.source):
-                    self._next = self.__class__(
-                        self.rx, self.names, self.source, 
-                        Position(pos, 0,0,0)
-                    )
-                else:
-                    self._next = ()
-                
-                return token
 
     def next(self):
         if self._next is None:
-            self.match()
+            self.current()
         return self._next
 
 
@@ -250,55 +236,63 @@ class Language(object):
         self.literal_rule = LiteralRule('literal', -1)
         self.suffix = OrderedDict()
         self.prefix = OrderedDict()
-        self.nofixs = OrderedDict()
         self.literals = OrderedDict()
         self.operators = set()
-        self.ignored = OrderedDict()
+        self.ignored = set()
         self.whitespace = OrderedDict()
+        self.comments = set()
         self._rx = None
+        self._names = None
 
     def rx(self):
+        ops = sorted(self.operators, key=len, reverse=True)
+        ops =[ re.escape(o).replace(' ','\s+') for o in ops]
+        whitespace = list(self.whitespace.values())
+
+        rx = [
+            ('whitespace', "|".join(whitespace)),
+            ('operator', "|".join(ops)),
+        ]
+        for key, value in self.literals.items():
+            rx.append((key, value))
+
+        
+        rx= "|".join("(?P<{}>{})".format(*a) for a in rx)
+        
+        ignored = "|".join(self.ignored)
+
+        rx = r'(?:{})* ({}) (?:{})*'.format(ignored, rx, ignored)
+
+        rx = re.compile(rx, re.U + re.X)
+        print(rx.pattern)
+        self._rx = rx
+        self._names = dict(((v, k) for k,v in rx.groupindex.items()))
+
+    def match(self, source, position):
         if not self._rx:
-            ops = sorted(self.operators, key=len, reverse=True)
-            ops =[ re.escape(o).replace(' ','\s+') for o in ops]
-            whitespace = list(self.whitespace.values())
+            self.rx()
+        match = self._rx.match(source, position.off)
 
-            rx = [
-                ('whitespace', "|".join(whitespace)),
-                ('operator', "|".join(ops)),
-            ]
-            for key, value in self.literals.items():
-                rx.append((key, value))
-
-            
-            print(rx)
-            rx= "|".join("(?P<{}>{})".format(*a) for a in rx)
-            
-            ignored = "|".join(self.ignored.values())
-
-            rx = r'(?:{})* ({}) (?:{})*'.format(ignored, rx, ignored)
-
-            print(rx)
-
-            rx = re.compile(rx, re.U + re.X)
-            self._rx = rx, dict(((v, k) for k,v in rx.groupindex.items()))
-
-        return self._rx
+        for num, result in enumerate(match.groups()[1:],2):
+            if result:
+                name = self._names[num] 
+                pos = Position(match.start(num), 0, 0 ,0)
+                token = Token(name, result, pos)
+                next_pos = Position(match.end(0), 0,0,0)
+                return token, next_pos
 
     def get_suffix_rule(self, token, outer):
         return self.suffix.get(token.text)
 
     def get_prefix_rule(self, token, outer):
-        if token.name in ("operator", "nofix"):
+        if token.name in ("operator",):
             return self.prefix[token.text]
         else:   
             return self.literal_rule
 
     def parse(self, source):
-        rx, names = self.rx()
         pos = Position(off=0, line_off=0, line=1,col=1)
-        
-        lexer = RegexLexer(rx, names, source, pos)
+        lexer = RegexLexer(self.match, source, pos)
         filter = token_filter("whitespace")
         parser = ParserCursor(self, filter(lexer))
 
@@ -315,14 +309,20 @@ class Language(object):
         self.whitespace[name] = rx
 
     def def_nofix(self, name):
+        # true, false, etc.
+        self.literals[name] = re.escape(name).replace(" ","\ ")
+
+    def def_keyword(self, name):
+        # "if", "else"
         self.operators.add(name)
+
+    def def_terminator(self, p, name):
+        # , ; 
+        pass
 
     def def_literal(self, name, rx):
         rx = re.compile(rx, re.U).pattern
         self.literals[name] = rx
-
-    def def_keyword(self, name):
-        self.literals[name] = re.escape(name).replace(" ","\ ")
 
     def def_ignored(self, name, rx):
         rx = re.compile(rx, re.U).pattern
